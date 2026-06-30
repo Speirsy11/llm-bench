@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -299,6 +299,59 @@ describe("executeAgenticTask", () => {
     expect(result.cleanedUp).toBe(true);
     expect(result.workspaceRoot).toBeDefined();
     expect(existsSync(result.workspaceRoot)).toBe(false);
+  });
+
+  it("cleans up the workspace when an error escapes the run", async () => {
+    const root = await harnessRoot();
+
+    await expect(
+      executeAgenticTask({
+        jobId: "job-1",
+        limits: LIMITS,
+        workspaceRoot: root,
+        artifactStore: new FileArtifactStore(path.join(root, "artifacts")),
+        eventSpool: new JsonlEventSpool(path.join(root, "events.jsonl")),
+        scenario: {
+          ...scenario([hiddenTest("ok", () => true)]),
+          prepare: () => Promise.reject(new Error("setup failed")),
+        },
+        harness: writingHarness("fixed"),
+      }),
+    ).rejects.toThrow("setup failed");
+
+    const leftover = (await readdir(root)).filter((entry) =>
+      entry.startsWith("llm-bench-workspace-"),
+    );
+    expect(leftover).toEqual([]);
+  });
+
+  it("honours cancellation that fires while hidden grading runs", async () => {
+    const cancel = new AbortController();
+
+    const result = await execute({
+      scenario: {
+        benchmark: benchmark(),
+        task: TASK,
+        prepare: (workspace) => workspace.writeFile("src/value.txt", "fixed"),
+        hiddenTests: [
+          {
+            id: "aborts-mid-grading",
+            run: () => {
+              cancel.abort();
+              return Promise.resolve(true);
+            },
+          },
+        ],
+      },
+      harness: writingHarness("fixed"),
+      cancel: cancel.signal,
+    });
+
+    expect(result.status).toBe("cancelled");
+    expect(result.grade).toBeNull();
+    expect(result.observations).toEqual([
+      { metricId: "hidden_test_pass_ratio", value: null },
+    ]);
   });
 
   it("uses the system clock when no clock is injected", async () => {

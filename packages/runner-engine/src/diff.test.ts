@@ -62,12 +62,51 @@ describe("renderDiffText", () => {
     );
   });
 
-  it("renders an added file with no prior content and no trailing newline", () => {
+  it("marks an added file's missing side with /dev/null and a no-newline note", () => {
     const diff = captureDiff(new Map(), new Map([["new.txt", "alpha"]]));
 
     expect(renderDiffText(diff)).toBe(
-      ["--- a/new.txt", "+++ b/new.txt", "+alpha", ""].join("\n"),
+      [
+        "--- /dev/null",
+        "+++ b/new.txt",
+        "+alpha",
+        "\\ No newline at end of file",
+        "",
+      ].join("\n"),
     );
+  });
+
+  it("marks a removed file's missing side with /dev/null", () => {
+    const diff = captureDiff(new Map([["gone.txt", "bye\n"]]), new Map());
+
+    expect(renderDiffText(diff)).toBe(
+      ["--- a/gone.txt", "+++ /dev/null", "-bye", ""].join("\n"),
+    );
+  });
+
+  it("renders distinct text for an added versus a removed empty file", () => {
+    const added = renderDiffText(captureDiff(new Map(), new Map([["e", ""]])));
+    const removed = renderDiffText(
+      captureDiff(new Map([["e", ""]]), new Map()),
+    );
+
+    expect(added).toBe(["--- /dev/null", "+++ b/e", ""].join("\n"));
+    expect(removed).toBe(["--- a/e", "+++ /dev/null", ""].join("\n"));
+    expect(added).not.toBe(removed);
+  });
+
+  it("renders distinct text for `foo` versus `foo\\n`", () => {
+    const noNewline = renderDiffText(
+      captureDiff(new Map([["f", "x\n"]]), new Map([["f", "foo"]])),
+    );
+    const withNewline = renderDiffText(
+      captureDiff(new Map([["f", "x\n"]]), new Map([["f", "foo\n"]])),
+    );
+
+    expect(noNewline).toContain("+foo\n\\ No newline at end of file");
+    expect(withNewline).toContain("+foo\n");
+    expect(withNewline).not.toContain("No newline");
+    expect(noNewline).not.toBe(withNewline);
   });
 
   it("renders an empty string when nothing changed", () => {

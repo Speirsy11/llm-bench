@@ -19,7 +19,16 @@ export class JsonlEventSpool {
 
   /** Reads every spooled event, rejecting any line that fails validation. */
   async events(): Promise<BenchmarkEvent[]> {
-    const raw = await readFile(this.filePath, "utf8").catch(() => "");
+    const raw = await readFile(this.filePath, "utf8").catch(
+      (error: NodeJS.ErrnoException) => {
+        // A missing spool means no events yet; any other I/O error is real and
+        // must surface rather than masquerade as an empty event trail.
+        if (error.code === "ENOENT") {
+          return "";
+        }
+        throw error;
+      },
+    );
     return raw
       .split("\n")
       .filter((line) => line.length > 0)

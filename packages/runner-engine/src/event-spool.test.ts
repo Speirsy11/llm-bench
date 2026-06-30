@@ -75,4 +75,13 @@ describe("JsonlEventSpool", () => {
 
     expect(await spool.events()).toEqual([]);
   });
+
+  it("surfaces a non-ENOENT read error instead of reporting no events", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "spool-"));
+    dirs.push(dir);
+    // Pointing the spool at a directory makes readFile fail with EISDIR.
+    const spool = new JsonlEventSpool(dir);
+
+    await expect(spool.events()).rejects.toThrow();
+  });
 });

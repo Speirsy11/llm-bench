@@ -1,5 +1,5 @@
 import { existsSync, symlinkSync } from "node:fs";
-import { mkdtemp, readFile, realpath } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,9 +8,15 @@ import { Workspace } from "./workspace";
 
 describe("Workspace", () => {
   const opened: Workspace[] = [];
+  const tempDirs: string[] = [];
 
   afterEach(async () => {
-    await Promise.all(opened.splice(0).map((workspace) => workspace.cleanup()));
+    await Promise.all([
+      ...opened.splice(0).map((workspace) => workspace.cleanup()),
+      ...tempDirs
+        .splice(0)
+        .map((dir) => rm(dir, { recursive: true, force: true })),
+    ]);
   });
 
   async function open(): Promise<Workspace> {
@@ -85,6 +91,7 @@ describe("Workspace", () => {
   it("rejects paths that escape through a symlink", async () => {
     const workspace = await open();
     const outside = await mkdtemp(path.join(tmpdir(), "outside-"));
+    tempDirs.push(outside);
     symlinkSync(outside, path.join(workspace.root, "link"));
 
     await expect(workspace.resolve("link/secret.txt")).rejects.toThrow(

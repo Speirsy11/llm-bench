@@ -94,6 +94,17 @@ type Clamp = (value: number, lower: number, upper: number) => number;
 
 const requireModule = createRequire(import.meta.url);
 
+/**
+ * Loads the repaired module to exercise its real behaviour.
+ *
+ * SECURITY: this runs in-process. That is acceptable here because the only code
+ * written into the workspace is this package's own first-party fixture source
+ * (see the harnesses in `./harness`) — no model-authored or otherwise untrusted
+ * code is executed in this epic, and there are no real model calls yet. When a
+ * real harness later produces patches from model output, that code MUST run
+ * behind the runner's process/sandbox boundary (EPIC-05+) rather than being
+ * required into the engine process.
+ */
 async function loadClamp(workspace: Workspace): Promise<Clamp> {
   const modulePath = await workspace.resolve(MODULE_PATH);
   const loaded = requireModule(modulePath) as { clamp: Clamp };

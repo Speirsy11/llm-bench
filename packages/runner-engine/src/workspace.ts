@@ -14,6 +14,12 @@ import path from "node:path";
  * resolved through {@link Workspace.resolve}, which contains access to the root:
  * absolute paths, parent-directory traversal, and symlink escapes are rejected
  * so a benchmark task can never read or write outside its sandbox.
+ *
+ * Containment is checked against the filesystem state at resolution time. A
+ * residual time-of-check/time-of-use race (an actor swapping an ancestor for an
+ * outward symlink between `resolve` and the subsequent open) is out of scope for
+ * this single-job, first-party execution model; the runner's process/sandbox
+ * boundary (EPIC-05+) is the defence against a concurrent adversary.
  */
 export class Workspace {
   private constructor(readonly root: string) {}

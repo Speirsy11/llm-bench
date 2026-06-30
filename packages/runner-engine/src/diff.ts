@@ -39,28 +39,44 @@ export function captureDiff(
   return { entries, changedPaths: entries.map((entry) => entry.path) };
 }
 
-/** Renders a diff as a deterministic unified-style text block. */
+const NO_NEWLINE_MARKER = "\\ No newline at end of file";
+
+/**
+ * Renders a diff as a deterministic unified-style text block. Missing sides are
+ * marked with `/dev/null` headers and a trailing newline at end of file is
+ * preserved, so distinct patches — an empty-file add versus remove, or `foo`
+ * versus `foo\n` — never render (and therefore never hash) identically.
+ */
 export function renderDiffText(diff: WorkspaceDiff): string {
   const lines: string[] = [];
   for (const entry of diff.entries) {
-    lines.push(`--- a/${entry.path}`, `+++ b/${entry.path}`);
-    for (const line of splitLines(entry.before)) {
-      lines.push(`-${line}`);
-    }
-    for (const line of splitLines(entry.after)) {
-      lines.push(`+${line}`);
-    }
+    lines.push(
+      entry.before === null ? "--- /dev/null" : `--- a/${entry.path}`,
+      entry.after === null ? "+++ /dev/null" : `+++ b/${entry.path}`,
+    );
+    renderSide("-", entry.before, lines);
+    renderSide("+", entry.after, lines);
   }
   return lines.length > 0 ? `${lines.join("\n")}\n` : "";
 }
 
-function splitLines(content: string | null): string[] {
-  if (content === null) {
-    return [];
+function renderSide(
+  prefix: string,
+  content: string | null,
+  lines: string[],
+): void {
+  if (content === null || content.length === 0) {
+    return;
   }
-  const lines = content.split("\n");
-  if (lines[lines.length - 1] === "") {
-    lines.pop();
+  const segments = content.split("\n");
+  const endsWithNewline = segments[segments.length - 1] === "";
+  if (endsWithNewline) {
+    segments.pop();
   }
-  return lines;
+  for (const segment of segments) {
+    lines.push(`${prefix}${segment}`);
+  }
+  if (!endsWithNewline) {
+    lines.push(NO_NEWLINE_MARKER);
+  }
 }

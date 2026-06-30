@@ -71,76 +71,117 @@ export async function executeAgenticTask(
   });
 
   const workspace = await Workspace.create(options.workspaceRoot);
-  await scenario.prepare(workspace);
-  const before = await workspace.snapshot();
-
-  let trajectory: string[] = [];
-  let harnessError: unknown = null;
   try {
-    const outcome = await options.harness.repair({ workspace, signal });
-    trajectory = outcome.trajectory;
-  } catch (error) {
-    harnessError = error;
-  }
+    await scenario.prepare(workspace);
+    const before = await workspace.snapshot();
 
-  const diff = captureDiff(before, await workspace.snapshot());
+    let trajectory: string[] = [];
+    let harnessError: unknown = null;
+    try {
+      const outcome = await options.harness.repair({ workspace, signal });
+      trajectory = outcome.trajectory;
+    } catch (error) {
+      harnessError = error;
+    }
 
-  const status = classify(options.cancel, deadline, harnessError);
-  const grade =
-    status === "completed"
-      ? await gradeHiddenTests(workspace, scenario.hiddenTests)
-      : null;
+    const diff = captureDiff(before, await workspace.snapshot());
 
-  const observations: MetricObservation[] = [
-    {
-      metricId: scenario.benchmark.primaryMetric().id,
-      value: grade === null ? null : grade.ratio,
-    },
-  ];
+    let status = classify(options.cancel, deadline, harnessError);
+    let grade: GradeResult | null = null;
+    if (status === "completed") {
+      grade = await gradeHiddenTests(workspace, scenario.hiddenTests);
+      // Grading is part of the run: if cancel/deadline fired while the hidden
+      // tests ran, honour the interruption instead of reporting a grade.
+      const afterGrading = classify(options.cancel, deadline, harnessError);
+      if (afterGrading !== "completed") {
+        status = afterGrading;
+        grade = null;
+      }
+    }
 
-  const end = now();
-  const endedAt = new Date(end).toISOString();
-  if (status === "completed") {
-    await eventSpool.append({
-      type: "case_completed",
-      at: endedAt,
+    const observations: MetricObservation[] = [
+      {
+        metricId: scenario.benchmark.primaryMetric().id,
+        value: grade === null ? null : grade.ratio,
+      },
+    ];
+
+    // Persist outputs before writing any terminal event, so the spool only
+    // becomes terminal once the artifact is durably stored.
+    const diffArtifact = await artifactStore.put({
+      jobId,
+      mediaType: "text/x-diff",
+      bytes: Buffer.from(renderDiffText(diff), "utf8"),
+    });
+
+    const end = now();
+    const endedAt = new Date(end).toISOString();
+    await appendTerminalEvent(eventSpool, {
+      status,
+      endedAt,
       caseId: scenario.task.id,
       observations,
+      harnessError,
+      limitMs: limits.maxDurationMs,
     });
-  } else if (status === "failed") {
+
+    await workspace.cleanup();
+
+    return {
+      jobId,
+      status,
+      grade,
+      observations,
+      trajectory,
+      diff,
+      diffArtifact,
+      durationMs: end - start,
+      cleanedUp: !existsSync(workspace.root),
+      workspaceRoot: workspace.root,
+    };
+  } catch (error) {
+    // Any failure after the workspace exists must still remove the temp tree.
+    await workspace.cleanup();
+    throw error;
+  }
+}
+
+interface TerminalEvent {
+  status: ExecutionStatus;
+  endedAt: string;
+  caseId: string;
+  observations: MetricObservation[];
+  harnessError: unknown;
+  limitMs: number;
+}
+
+async function appendTerminalEvent(
+  eventSpool: JsonlEventSpool,
+  event: TerminalEvent,
+): Promise<void> {
+  if (event.status === "completed") {
+    await eventSpool.append({
+      type: "case_completed",
+      at: event.endedAt,
+      caseId: event.caseId,
+      observations: event.observations,
+    });
+  } else if (event.status === "failed") {
     await eventSpool.append({
       type: "job_failed",
-      at: endedAt,
-      failure: { kind: "harness_error", message: describeError(harnessError) },
+      at: event.endedAt,
+      failure: {
+        kind: "harness_error",
+        message: describeError(event.harnessError),
+      },
     });
-  } else if (status === "timed_out") {
+  } else if (event.status === "timed_out") {
     await eventSpool.append({
       type: "job_failed",
-      at: endedAt,
-      failure: { kind: "timeout", limitMs: limits.maxDurationMs },
+      at: event.endedAt,
+      failure: { kind: "timeout", limitMs: event.limitMs },
     });
   }
-
-  const diffArtifact = await artifactStore.put({
-    jobId,
-    mediaType: "text/x-diff",
-    bytes: Buffer.from(renderDiffText(diff), "utf8"),
-  });
-
-  await workspace.cleanup();
-
-  return {
-    jobId,
-    status,
-    grade,
-    observations,
-    trajectory,
-    diff,
-    diffArtifact,
-    durationMs: end - start,
-    cleanedUp: !existsSync(workspace.root),
-    workspaceRoot: workspace.root,
-  };
 }
 
 function classify(
