@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1782848210313,
+      "tag": "0000_identity-experiments",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1782848556028,
+      "tag": "0001_control-plane-schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782850077928,
+      "tag": "0002_unique-user-email",
+      "breakpoints": true
+    }
+  ]
+}
