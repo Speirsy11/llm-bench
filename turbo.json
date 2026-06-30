@@ -1,0 +1,92 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "ui": "tui",
+  "tasks": {
+    "topo": {
+      "dependsOn": ["^topo"]
+    },
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": [".cache/tsbuildinfo.json", "dist/**"]
+    },
+    "dev": {
+      "dependsOn": ["^dev"],
+      "cache": false,
+      "persistent": false
+    },
+    "format": {
+      "outputs": [".cache/.prettiercache"],
+      "outputLogs": "new-only"
+    },
+    "lint": {
+      "dependsOn": ["^topo", "^build"],
+      "outputs": [".cache/.eslintcache"]
+    },
+    "typecheck": {
+      "dependsOn": ["^topo", "^build"],
+      "outputs": [".cache/tsbuildinfo.json"]
+    },
+    "test": {
+      "dependsOn": ["^topo", "^build"]
+    },
+    "test:watch": {
+      "cache": false,
+      "persistent": true
+    },
+    "clean": {
+      "cache": false
+    },
+    "//#clean": {
+      "cache": false
+    }
+  },
+  "globalPassThroughEnv": [
+    "NODE_ENV",
+    "CI",
+    "SKIP_ENV_VALIDATION",
+    "VERCEL",
+    "VERCEL_ENV",
+    "VERCEL_URL",
+    "npm_lifecycle_event"
+  ],
+  "boundaries": {
+    "tags": {
+      "foundation": {
+        "dependencies": {
+          "allow": ["foundation", "tooling"]
+        }
+      },
+      "service": {
+        "dependencies": {
+          "allow": ["foundation", "tooling"]
+        }
+      },
+      "feature": {
+        "dependencies": {
+          "allow": ["foundation", "service", "tooling"]
+        }
+      },
+      "composition": {
+        "dependencies": {
+          "allow": ["foundation", "service", "feature", "tooling"]
+        }
+      },
+      "app": {
+        "dependencies": {
+          "allow": [
+            "foundation",
+            "service",
+            "feature",
+            "composition",
+            "tooling"
+          ]
+        }
+      },
+      "tooling": {
+        "dependencies": {
+          "allow": ["tooling"]
+        }
+      }
+    }
+  }
+}

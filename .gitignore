@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build and framework output
+build/
+dist/
+**/dist/
+.next/
+out/
+.turbo/
+.cache/
+**/.cache/
+coverage/
+playwright-report/
+test-results/
+
+# Runtime state and artifacts
+.llm-bench/
+artifacts/
+*.sqlite
+*.sqlite3
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Tooling
+.vercel/
+.vscode/
+.idea/
+*.tsbuildinfo
+next-env.d.ts
+
+# OS and logs
+.DS_Store
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
