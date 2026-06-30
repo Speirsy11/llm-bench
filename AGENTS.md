@@ -1,11 +1,13 @@
 # LLMBench agent instructions
 
-Before changing code:
+Before changing code, read the local planning files when they are available:
 
-1. Read `docs/planning/PRODUCT_PLAN.md`.
-2. Read `docs/planning/DELIVERY_PLAN.md`.
-3. Read `docs/planning/AGENT_WORKFLOW.md`.
-4. Work on exactly one unblocked epic file from `docs/planning/epics/`.
+1. `docs/planning/PRODUCT_PLAN.md`
+2. `docs/planning/DELIVERY_PLAN.md`
+3. `docs/planning/AGENT_WORKFLOW.md`
+4. One unblocked epic file from `docs/planning/epics/`
+
+The `docs/` directory is intentionally local and Git-ignored. If these files are absent, request the relevant epic brief from the repository owner before implementing an epic.
 
 Use test-driven vertical slices: one observable failing test, the minimum implementation to make it pass, then refactor while green. Test public behavior rather than private implementation.
 
