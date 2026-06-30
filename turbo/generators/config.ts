@@ -10,13 +10,13 @@ interface PackageJson {
 
 export default function generator(plop: PlopTypes.NodePlopAPI): void {
   plop.setGenerator("init", {
-    description: "Generate a new package for the Acme Monorepo",
+    description: "Generate a new package for the LLMBench monorepo",
     prompts: [
       {
         type: "input",
         name: "name",
         message:
-          "What is the name of the package? (You can skip the `@charlie/` prefix)",
+          "What is the name of the package? (You can skip the `@llm-bench/` prefix)",
       },
       {
         type: "input",
@@ -28,8 +28,8 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
     actions: [
       (answers) => {
         if ("name" in answers && typeof answers.name === "string") {
-          if (answers.name.startsWith("@charlie/")) {
-            answers.name = answers.name.replace("@charlie/", "");
+          if (answers.name.startsWith("@llm-bench/")) {
+            answers.name = answers.name.replace("@llm-bench/", "");
           }
         }
         return "Config sanitized";

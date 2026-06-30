@@ -1,0 +1,24 @@
+# Codecov policy for LLMBench.
+# Core packages (foundation/service/feature/composition/tooling) target 100%
+# coverage; application packages target 90%. Live paid-provider suites are
+# opt-in and never contribute to ordinary PR coverage.
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 0%
+    patch:
+      default:
+        target: 90%
+        threshold: 0%
+
+comment:
+  layout: "reach, diff, flags, files"
+  require_changes: true
+
+ignore:
+  - "**/*.test.ts"
+  - "**/*.config.*"
+  - "tooling/typescript"
+  - "turbo/generators/templates"

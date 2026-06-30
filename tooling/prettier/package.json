@@ -1,5 +1,5 @@
 {
-  "name": "@charlie/prettier-config",
+  "name": "@llm-bench/prettier-config",
   "private": true,
   "type": "module",
   "exports": {
@@ -16,9 +16,9 @@
     "prettier-plugin-tailwindcss": "^0.7.1"
   },
   "devDependencies": {
-    "@charlie/tsconfig": "workspace:*",
+    "@llm-bench/tsconfig": "workspace:*",
     "@types/node": "catalog:",
     "typescript": "catalog:"
   },
-  "prettier": "@charlie/prettier-config"
+  "prettier": "@llm-bench/prettier-config"
 }

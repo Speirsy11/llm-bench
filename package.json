@@ -19,15 +19,16 @@
     "lint:ws": "pnpm dlx sherif@latest",
     "postinstall": "pnpm lint:ws",
     "test": "turbo run test",
+    "test:coverage": "turbo run test:coverage",
     "test:watch": "turbo run test:watch",
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {
-    "@charlie/prettier-config": "workspace:*",
+    "@llm-bench/prettier-config": "workspace:*",
     "@turbo/gen": "^2.5.8",
     "prettier": "catalog:",
     "turbo": "^2.5.8",
     "typescript": "catalog:"
   },
-  "prettier": "@charlie/prettier-config"
+  "prettier": "@llm-bench/prettier-config"
 }

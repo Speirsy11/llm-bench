@@ -1,5 +1,5 @@
 {
-  "name": "@charlie/eslint-config",
+  "name": "@llm-bench/eslint-config",
   "private": true,
   "type": "module",
   "exports": {
@@ -24,12 +24,12 @@
     "typescript-eslint": "^8.46.2"
   },
   "devDependencies": {
-    "@charlie/prettier-config": "workspace:*",
-    "@charlie/tsconfig": "workspace:*",
+    "@llm-bench/prettier-config": "workspace:*",
+    "@llm-bench/tsconfig": "workspace:*",
     "@types/node": "catalog:",
     "eslint": "catalog:",
     "prettier": "catalog:",
     "typescript": "catalog:"
   },
-  "prettier": "@charlie/prettier-config"
+  "prettier": "@llm-bench/prettier-config"
 }

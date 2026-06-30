@@ -29,6 +29,10 @@
     "test": {
       "dependsOn": ["^topo", "^build"]
     },
+    "test:coverage": {
+      "dependsOn": ["^topo", "^build"],
+      "outputs": ["coverage/**"]
+    },
     "test:watch": {
       "cache": false,
       "persistent": true

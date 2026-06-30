@@ -1,5 +1,5 @@
 {
-  "extends": "@charlie/tsconfig/base.json",
+  "extends": "@llm-bench/tsconfig/base.json",
   "include": ["."],
   "exclude": ["node_modules"]
 }
