@@ -33,6 +33,9 @@ catalogs:
     vitest:
       specifier: ^3.2.4
       version: 3.2.6
+    zod:
+      specifier: ^4.1.5
+      version: 4.1.12
 
 overrides:
   '@types/minimatch': 5.1.2
@@ -56,6 +59,43 @@ importers:
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
+
+  packages/contracts:
+    dependencies:
+      zod:
+        specifier: 'catalog:'
+        version: 4.1.12
+    devDependencies:
+      '@llm-bench/eslint-config':
+        specifier: workspace:*
+        version: link:../../tooling/eslint
+      '@llm-bench/prettier-config':
+        specifier: workspace:*
+        version: link:../../tooling/prettier
+      '@llm-bench/tsconfig':
+        specifier: workspace:*
+        version: link:../../tooling/typescript
+      '@llm-bench/vitest-config':
+        specifier: workspace:*
+        version: link:../../tooling/vitest
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.18.12
+      '@vitest/coverage-v8':
+        specifier: 'catalog:'
+        version: 3.2.6(vitest@3.2.6(@types/node@22.18.12)(jiti@2.7.0)(jsdom@26.1.0(bufferutil@4.0.8)(utf-8-validate@6.0.4))(lightningcss@1.30.2)(terser@5.44.0)(tsx@4.20.6)(yaml@2.8.1))
+      eslint:
+        specifier: 'catalog:'
+        version: 9.38.0(jiti@2.7.0)
+      prettier:
+        specifier: 'catalog:'
+        version: 3.6.2
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 3.2.6(@types/node@22.18.12)(jiti@2.7.0)(jsdom@26.1.0(bufferutil@4.0.8)(utf-8-validate@6.0.4))(lightningcss@1.30.2)(terser@5.44.0)(tsx@4.20.6)(yaml@2.8.1)
 
   tooling/eslint:
     dependencies:
