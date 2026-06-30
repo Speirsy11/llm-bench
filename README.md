@@ -2,7 +2,7 @@
 
 LLMBench is an agentic-first benchmarking platform for comparing models, harnesses, and toolsets under reproducible conditions.
 
-The project is in its workspace-foundation state (EPIC-01). The `tooling/` and `turbo/` directories provide the shared quality baseline used by every future product package.
+The `tooling/` and `turbo/` directories provide the shared quality baseline used by every product package. The first product package, `@llm-bench/contracts` (EPIC-02), defines the provider-neutral vocabulary — benchmarks, harnesses, metrics, manifests, events, and the versioned wire protocol — that every later package builds on.
 
 ## Prerequisites
 
