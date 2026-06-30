@@ -1,0 +1,44 @@
+{
+  "name": "@llm-bench/control-plane",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc",
+    "clean": "git clean -xdf .cache .turbo dist node_modules",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:test:reset": "tsx scripts/reset-test-database.ts",
+    "format": "prettier --check . --ignore-path ../../.gitignore",
+    "lint": "eslint --flag unstable_native_nodejs_ts_config --cache --cache-location .cache/.eslintcache",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage --config vitest.coverage.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@llm-bench/eslint-config": "workspace:*",
+    "@llm-bench/prettier-config": "workspace:*",
+    "@llm-bench/tsconfig": "workspace:*",
+    "@llm-bench/vitest-config": "workspace:*",
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "drizzle-kit": "0.31.10",
+    "eslint": "catalog:",
+    "prettier": "catalog:",
+    "tsx": "4.20.6",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "prettier": "@llm-bench/prettier-config",
+  "dependencies": {
+    "@auth/core": "0.41.2",
+    "@auth/drizzle-adapter": "1.11.2",
+    "drizzle-orm": "0.45.2",
+    "postgres": "3.4.9"
+  }
+}
