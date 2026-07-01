@@ -8,10 +8,7 @@ import { errorFromResponse, ProviderError } from "./errors";
 import { buildRequestBody, parseCompletionResponse } from "./normalize";
 import { iterateSseData, StreamAssembler } from "./stream";
 
-export type FetchLike = (
-  input: string,
-  init: RequestInit,
-) => Promise<Response>;
+export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
 export interface ProviderConfig {
   /** Base URL including version, e.g. `https://openrouter.ai/api/v1`. */
@@ -55,7 +52,13 @@ export class OpenAICompatibleProvider {
     try {
       json = JSON.parse(text);
     } catch (cause) {
-      throw new ProviderError("Provider returned invalid JSON.", "decode", false, response.status, { cause });
+      throw new ProviderError(
+        "Provider returned invalid JSON.",
+        "decode",
+        false,
+        response.status,
+        { cause },
+      );
     }
     return parseCompletionResponse(json);
   }
@@ -69,7 +72,12 @@ export class OpenAICompatibleProvider {
       throw errorFromResponse(response.status, await response.text());
     }
     if (response.body === null) {
-      throw new ProviderError("Provider stream had no body.", "decode", false, response.status);
+      throw new ProviderError(
+        "Provider stream had no body.",
+        "decode",
+        false,
+        response.status,
+      );
     }
     const assembler = new StreamAssembler();
     for await (const data of iterateSseData(response.body)) {
@@ -96,9 +104,16 @@ export class OpenAICompatibleProvider {
         signal,
       });
     } catch (cause) {
-      if (cause instanceof DOMException && cause.name === "AbortError") throw cause;
+      if (cause instanceof DOMException && cause.name === "AbortError")
+        throw cause;
       if (cause instanceof Error && cause.name === "AbortError") throw cause;
-      throw new ProviderError("Provider request failed to reach the network.", "network", true, null, { cause });
+      throw new ProviderError(
+        "Provider request failed to reach the network.",
+        "network",
+        true,
+        null,
+        { cause },
+      );
     }
   }
 }

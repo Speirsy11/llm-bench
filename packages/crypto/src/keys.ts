@@ -9,7 +9,10 @@ export async function generateRunnerKeyPair(): Promise<RunnerKeyPair> {
   const sodium = await getSodium();
   const pair = sodium.crypto_box_keypair();
   return {
-    publicKey: sodium.to_base64(pair.publicKey, sodium.base64_variants.ORIGINAL),
+    publicKey: sodium.to_base64(
+      pair.publicKey,
+      sodium.base64_variants.ORIGINAL,
+    ),
     privateKey: sodium.to_base64(
       pair.privateKey,
       sodium.base64_variants.ORIGINAL,
@@ -21,9 +24,7 @@ export async function generateRunnerKeyPair(): Promise<RunnerKeyPair> {
  * Deterministic, non-secret fingerprint of a base64 public key. Used to detect
  * when a sealed credential is presented to a runner whose key does not match.
  */
-export async function fingerprintPublicKey(
-  publicKey: string,
-): Promise<string> {
+export async function fingerprintPublicKey(publicKey: string): Promise<string> {
   const sodium = await getSodium();
   const raw = sodium.from_base64(publicKey, sodium.base64_variants.ORIGINAL);
   const digest = sodium.crypto_generichash(16, raw);

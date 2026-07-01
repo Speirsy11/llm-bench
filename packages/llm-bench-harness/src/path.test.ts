@@ -27,6 +27,8 @@ describe("resolveWithinRoot", () => {
   });
 
   it("rejects absolute paths", () => {
-    expect(() => resolveWithinRoot(root, "/etc/passwd")).toThrow(PathEscapeError);
+    expect(() => resolveWithinRoot(root, "/etc/passwd")).toThrow(
+      PathEscapeError,
+    );
   });
 });

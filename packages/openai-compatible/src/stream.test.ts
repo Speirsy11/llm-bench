@@ -49,7 +49,13 @@ describe("StreamAssembler", () => {
     assembler.push(
       JSON.stringify({
         choices: [
-          { delta: { tool_calls: [{ id: "c1", function: { name: "f", arguments: "{}" } }] } },
+          {
+            delta: {
+              tool_calls: [
+                { id: "c1", function: { name: "f", arguments: "{}" } },
+              ],
+            },
+          },
         ],
       }),
     );
@@ -71,18 +77,22 @@ describe("StreamAssembler", () => {
   it("ignores empty deltas and non-array tool calls", () => {
     const assembler = new StreamAssembler();
     const events = assembler.push(
-      JSON.stringify({ choices: [{ delta: { content: "", tool_calls: "nope" } }] }),
+      JSON.stringify({
+        choices: [{ delta: { content: "", tool_calls: "nope" } }],
+      }),
     );
     expect(events).toEqual([]);
   });
 
   it("tolerates a choice with no delta and a tool call with no function", () => {
     const assembler = new StreamAssembler();
-    expect(assembler.push(JSON.stringify({ choices: [{ finish_reason: "stop" }] }))).toEqual(
-      [],
-    );
+    expect(
+      assembler.push(JSON.stringify({ choices: [{ finish_reason: "stop" }] })),
+    ).toEqual([]);
     assembler.push(
-      JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: "c1" }] } }] }),
+      JSON.stringify({
+        choices: [{ delta: { tool_calls: [{ index: 0, id: "c1" }] } }],
+      }),
     );
     expect(assembler.finish()[0]).toEqual({
       type: "tool-call",
@@ -112,7 +122,9 @@ describe("iterateSseData", () => {
       start(controller) {
         const encoder = new TextEncoder();
         controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"con'));
-        controller.enqueue(encoder.encode('tent":"hi"}}]}\n\ndata: [DONE]\n\n'));
+        controller.enqueue(
+          encoder.encode('tent":"hi"}}]}\n\ndata: [DONE]\n\n'),
+        );
         controller.close();
       },
     });

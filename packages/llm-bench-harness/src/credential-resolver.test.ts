@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import type { RunnerIdentity } from "@llm-bench/crypto";
 import { generateRunnerKeyPair, sealCredential } from "@llm-bench/crypto";
 
-import { CredentialResolutionError, CredentialResolver } from "./credential-resolver";
+import {
+  CredentialResolutionError,
+  CredentialResolver,
+} from "./credential-resolver";
 
 async function runner(runnerId: string): Promise<RunnerIdentity> {
   return { runnerId, ...(await generateRunnerKeyPair()) };

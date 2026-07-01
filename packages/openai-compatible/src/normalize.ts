@@ -100,12 +100,20 @@ interface RawToolCall {
 /** Parses a non-streaming chat-completions response into a normalized result. */
 export function parseCompletionResponse(raw: unknown): CompletionResult {
   if (typeof raw !== "object" || raw === null) {
-    throw new ProviderError("Provider returned a non-object body.", "decode", false);
+    throw new ProviderError(
+      "Provider returned a non-object body.",
+      "decode",
+      false,
+    );
   }
   const body = raw as Record<string, unknown>;
   const choices = body.choices;
   if (!Array.isArray(choices) || choices.length === 0) {
-    throw new ProviderError("Provider response had no choices.", "decode", false);
+    throw new ProviderError(
+      "Provider response had no choices.",
+      "decode",
+      false,
+    );
   }
   const choice = choices[0] as Record<string, unknown>;
   const message = (choice.message ?? {}) as Record<string, unknown>;

@@ -18,11 +18,9 @@ export class ProviderError extends Error {
 }
 
 /** Maps an HTTP status and optional provider error body to a ProviderError. */
-export function errorFromResponse(
-  status: number,
-  body: string,
-): ProviderError {
-  const message = extractErrorMessage(body) ?? `Provider request failed (${status}).`;
+export function errorFromResponse(status: number, body: string): ProviderError {
+  const message =
+    extractErrorMessage(body) ?? `Provider request failed (${status}).`;
   if (status === 401 || status === 403) {
     return new ProviderError(message, "authentication", false, status);
   }

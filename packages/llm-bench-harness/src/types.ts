@@ -46,7 +46,13 @@ export type HarnessStopReason =
 export type HarnessEvent =
   | { type: "assistant"; content: string; toolCallCount: number }
   | { type: "tool-call"; id: string; name: string; arguments: string }
-  | { type: "tool-result"; id: string; name: string; content: string; ok: boolean }
+  | {
+      type: "tool-result";
+      id: string;
+      name: string;
+      content: string;
+      ok: boolean;
+    }
   | { type: "stop"; reason: HarnessStopReason; detail?: string };
 
 export interface HarnessRunResult {

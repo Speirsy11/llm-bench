@@ -1,4 +1,8 @@
-import type { RunnerIdentity, SealedCredential, Secret } from "@llm-bench/crypto";
+import type {
+  RunnerIdentity,
+  SealedCredential,
+  Secret,
+} from "@llm-bench/crypto";
 import { openCredential } from "@llm-bench/crypto";
 
 /** Raised when a required credential is not available to this runner. */

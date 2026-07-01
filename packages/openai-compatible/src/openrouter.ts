@@ -1,5 +1,5 @@
-import type { ApiKey } from "./types";
 import type { FetchLike } from "./provider";
+import type { ApiKey } from "./types";
 import { OpenAICompatibleProvider } from "./provider";
 
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1" as const;
@@ -21,7 +21,8 @@ export interface OpenRouterProviderConfig {
 export class OpenRouterProvider extends OpenAICompatibleProvider {
   constructor(config: OpenRouterProviderConfig) {
     const defaultHeaders: Record<string, string> = {};
-    if (config.referer !== undefined) defaultHeaders["HTTP-Referer"] = config.referer;
+    if (config.referer !== undefined)
+      defaultHeaders["HTTP-Referer"] = config.referer;
     if (config.title !== undefined) defaultHeaders["X-Title"] = config.title;
     super({
       baseUrl: config.baseUrl ?? OPENROUTER_BASE_URL,

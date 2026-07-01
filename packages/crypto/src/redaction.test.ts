@@ -1,7 +1,7 @@
 import { inspect } from "node:util";
 import { describe, expect, it } from "vitest";
 
-import { redactSecrets, REDACTION_MARKER, Secret } from "./redaction";
+import { REDACTION_MARKER, redactSecrets, Secret } from "./redaction";
 
 describe("redaction", () => {
   it("redacts secret substrings from arbitrary text", () => {

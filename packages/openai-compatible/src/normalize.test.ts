@@ -31,7 +31,11 @@ describe("buildRequestBody", () => {
         temperature: 0.2,
         maxTokens: 128,
         tools: [
-          { name: "read", description: "read a file", parameters: { type: "object" } },
+          {
+            name: "read",
+            description: "read a file",
+            parameters: { type: "object" },
+          },
         ],
         messages: [
           { role: "system", content: "sys" },
@@ -51,18 +55,29 @@ describe("buildRequestBody", () => {
     expect(body.tools).toEqual([
       {
         type: "function",
-        function: { name: "read", description: "read a file", parameters: { type: "object" } },
+        function: {
+          name: "read",
+          description: "read a file",
+          parameters: { type: "object" },
+        },
       },
     ]);
     const messages = body.messages as Record<string, unknown>[];
     expect(messages[1]?.tool_calls).toEqual([
-      { id: "c1", type: "function", function: { name: "read", arguments: "{}" } },
+      {
+        id: "c1",
+        type: "function",
+        function: { name: "read", arguments: "{}" },
+      },
     ]);
     expect(messages[2]).toMatchObject({ tool_call_id: "c1", name: "read" });
   });
 
   it("omits an empty tools array", () => {
-    const body = buildRequestBody({ ...baseRequest, tools: [] }, { stream: false });
+    const body = buildRequestBody(
+      { ...baseRequest, tools: [] },
+      { stream: false },
+    );
     expect(body.tools).toBeUndefined();
   });
 });
@@ -90,7 +105,9 @@ describe("normalizeUsage", () => {
       completionTokens: null,
       totalTokens: null,
     });
-    expect(normalizeUsage({ prompt_tokens: "x", total_tokens: Infinity })).toEqual({
+    expect(
+      normalizeUsage({ prompt_tokens: "x", total_tokens: Infinity }),
+    ).toEqual({
       promptTokens: null,
       completionTokens: null,
       totalTokens: null,
@@ -99,7 +116,11 @@ describe("normalizeUsage", () => {
 
   it("normalizes a complete usage object", () => {
     expect(
-      normalizeUsage({ prompt_tokens: 10, completion_tokens: 3, total_tokens: 13 }),
+      normalizeUsage({
+        prompt_tokens: 10,
+        completion_tokens: 3,
+        total_tokens: 13,
+      }),
     ).toEqual({ promptTokens: 10, completionTokens: 3, totalTokens: 13 });
   });
 });
@@ -124,7 +145,10 @@ describe("parseCompletionResponse", () => {
         {
           message: {
             tool_calls: [
-              { id: "c1", function: { name: "read", arguments: '{"path":"a"}' } },
+              {
+                id: "c1",
+                function: { name: "read", arguments: '{"path":"a"}' },
+              },
               { function: {} },
               {},
             ],
@@ -153,6 +177,8 @@ describe("parseCompletionResponse", () => {
   it("throws a decode error for malformed bodies", () => {
     expect(() => parseCompletionResponse(null)).toThrow(ProviderError);
     expect(() => parseCompletionResponse({})).toThrow(/no choices/);
-    expect(() => parseCompletionResponse({ choices: [] })).toThrow(/no choices/);
+    expect(() => parseCompletionResponse({ choices: [] })).toThrow(
+      /no choices/,
+    );
   });
 });

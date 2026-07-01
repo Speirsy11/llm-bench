@@ -40,7 +40,10 @@ export class Secret {
  * Replaces every occurrence of each secret substring with the redaction marker.
  * Empty secrets are ignored so a stray empty string cannot blank the input.
  */
-export function redactSecrets(text: string, secrets: readonly string[]): string {
+export function redactSecrets(
+  text: string,
+  secrets: readonly string[],
+): string {
   let output = text;
   for (const secret of secrets) {
     if (secret.length === 0) continue;

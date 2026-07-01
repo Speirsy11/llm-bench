@@ -32,9 +32,15 @@ export class StreamAssembler {
     try {
       chunk = JSON.parse(data) as Record<string, unknown>;
     } catch (cause) {
-      throw new ProviderError("Malformed stream chunk.", "decode", false, null, {
-        cause,
-      });
+      throw new ProviderError(
+        "Malformed stream chunk.",
+        "decode",
+        false,
+        null,
+        {
+          cause,
+        },
+      );
     }
 
     const events: StreamEvent[] = [];
@@ -82,7 +88,11 @@ export class StreamAssembler {
       const index = typeof item.index === "number" ? item.index : position;
       const existing =
         this.#toolCalls.get(index) ??
-        ({ id: `call_${index}`, name: "", arguments: "" } satisfies PartialToolCall);
+        ({
+          id: `call_${index}`,
+          name: "",
+          arguments: "",
+        } satisfies PartialToolCall);
       if (typeof item.id === "string") existing.id = item.id;
       const fn = item.function ?? {};
       if (typeof fn.name === "string") existing.name += fn.name;

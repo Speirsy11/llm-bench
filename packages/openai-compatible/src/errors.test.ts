@@ -9,7 +9,9 @@ describe("errorFromResponse", () => {
       retryable: false,
       status: 401,
     });
-    expect(errorFromResponse(403, "")).toMatchObject({ type: "authentication" });
+    expect(errorFromResponse(403, "")).toMatchObject({
+      type: "authentication",
+    });
   });
 
   it("maps rate limits and server errors as retryable", () => {
@@ -46,9 +48,9 @@ describe("errorFromResponse", () => {
 
   it("falls back to a default message for opaque bodies", () => {
     expect(errorFromResponse(500, "not json").message).toContain("500");
-    expect(errorFromResponse(500, JSON.stringify({ nope: 1 })).message).toContain(
-      "500",
-    );
+    expect(
+      errorFromResponse(500, JSON.stringify({ nope: 1 })).message,
+    ).toContain("500");
     expect(
       errorFromResponse(500, JSON.stringify({ error: { code: 1 } })).message,
     ).toContain("500");

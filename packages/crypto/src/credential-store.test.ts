@@ -29,7 +29,8 @@ describe("RunnerCredentialStore", () => {
     expect(await store.keyPair()).toEqual(keyPair);
 
     const dirMode = (await stat(store.root)).mode & 0o777;
-    const fileMode = (await stat(join(store.root, "runner-key.json"))).mode & 0o777;
+    const fileMode =
+      (await stat(join(store.root, "runner-key.json"))).mode & 0o777;
     expect(dirMode).toBe(0o700);
     expect(fileMode).toBe(0o600);
   });

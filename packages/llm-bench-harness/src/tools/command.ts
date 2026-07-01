@@ -52,7 +52,10 @@ export function createCommandTool(
       },
     },
     async execute(rawArguments, context: ToolContext) {
-      const extraArgs = parseExtraArgs(rawArguments, spec.allowExtraArgs ?? false);
+      const extraArgs = parseExtraArgs(
+        rawArguments,
+        spec.allowExtraArgs ?? false,
+      );
       const result = await executor(spec.command, [...baseArgs, ...extraArgs], {
         cwd: context.root,
         signal: context.signal,
@@ -63,7 +66,10 @@ export function createCommandTool(
   };
 }
 
-function parseExtraArgs(rawArguments: string, allowExtraArgs: boolean): string[] {
+function parseExtraArgs(
+  rawArguments: string,
+  allowExtraArgs: boolean,
+): string[] {
   if (rawArguments === "" || rawArguments === "{}") return [];
   let parsed: unknown;
   try {
