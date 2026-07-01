@@ -1,5 +1,6 @@
 import {
   bigint,
+  boolean,
   index,
   integer,
   jsonb,
@@ -115,11 +116,11 @@ export const runners = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     name: text().notNull(),
     publicKey: text("public_key").notNull(),
+    protocolVersion: text("protocol_version").default("1.0").notNull(),
+    tokenHash: text("token_hash"),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
     status: runnerStatus().default("offline").notNull(),
-    capabilities: jsonb()
-      .$type<Record<string, unknown>>()
-      .default({})
-      .notNull(),
+    capabilities: jsonb().$type<string[]>().default([]).notNull(),
     environment: jsonb().$type<Record<string, unknown>>().default({}).notNull(),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -129,7 +130,33 @@ export const runners = pgTable(
       .defaultNow()
       .notNull(),
   },
-  (table) => [index("runners_owner_id_index").on(table.ownerId)],
+  (table) => [
+    index("runners_owner_id_index").on(table.ownerId),
+    uniqueIndex("runners_token_hash_unique").on(table.tokenHash),
+  ],
+);
+
+export const runnerPairings = pgTable(
+  "runner_pairings",
+  {
+    deviceCodeHash: text("device_code_hash").primaryKey(),
+    userCode: text("user_code").notNull(),
+    request: jsonb().$type<Record<string, unknown>>().notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    ownerId: text("owner_id").references(() => users.id, {
+      onDelete: "cascade",
+    }),
+    runnerId: uuid("runner_id").references(() => runners.id, {
+      onDelete: "cascade",
+    }),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("runner_pairings_user_code_unique").on(table.userCode),
+  ],
 );
 
 export const experiments = pgTable(
@@ -195,6 +222,16 @@ export const jobs = pgTable(
       onDelete: "set null",
     }),
     status: jobStatus().default("queued").notNull(),
+    benchmarkId: text("benchmark_id"),
+    benchmarkVersion: text("benchmark_version"),
+    requiredCapabilities: jsonb("required_capabilities")
+      .$type<string[]>()
+      .default([])
+      .notNull(),
+    queuePosition: integer("queue_position").generatedAlwaysAsIdentity(),
+    cancellationRequested: boolean("cancellation_requested")
+      .default(false)
+      .notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -217,6 +254,12 @@ export const attempts = pgTable(
       .references(() => jobs.id, { onDelete: "cascade" }),
     number: integer().notNull(),
     status: jobStatus().default("queued").notNull(),
+    runnerId: uuid("runner_id").references(() => runners.id, {
+      onDelete: "set null",
+    }),
+    leaseTokenHash: text("lease_token_hash"),
+    checkpoint: jsonb().$type<Record<string, unknown>>(),
+    terminal: jsonb().$type<Record<string, unknown>>(),
     startedAt: timestamp("started_at", { withTimezone: true }),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
     error: jsonb().$type<Record<string, unknown>>(),
@@ -227,6 +270,21 @@ export const attempts = pgTable(
   (table) => [
     uniqueIndex("attempts_job_number_unique").on(table.jobId, table.number),
   ],
+);
+
+export const runnerEvents = pgTable(
+  "runner_events",
+  {
+    attemptId: uuid("attempt_id")
+      .notNull()
+      .references(() => attempts.id, { onDelete: "cascade" }),
+    sequence: integer().notNull(),
+    event: jsonb().$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.attemptId, table.sequence] })],
 );
 
 export const results = pgTable(

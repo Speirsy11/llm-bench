@@ -18,12 +18,18 @@ these services. Authorization does not belong in route handlers.
 ## Database
 
 Drizzle schema and forward-only migrations cover Auth.js users/accounts/sessions,
-runners, experiments, targets, jobs, attempts, results, metrics, and artifacts.
+runners, pairings, runner events, experiments, targets, jobs, attempts, results,
+metrics, and artifacts. Runner tokens are stored only as SHA-256 hashes; pairing
+codes expire and can deliver a token only once. Lease selection uses a locked,
+skip-locked transaction so concurrent runners cannot claim the same job.
 The migration sequence introduced by EPIC-04 is:
 
 1. `0000_identity-experiments.sql`
 2. `0001_control-plane-schema.sql`
 3. `0002_unique-user-email.sql`
+4. `0003_worried_prism.sql`
+5. `0004_violet_miss_america.sql`
+6. `0005_boring_mathemanic.sql`
 
 Apply production/development migrations with:
 

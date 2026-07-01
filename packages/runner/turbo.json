@@ -1,0 +1,12 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "build": { "env": ["LLMBENCH_RUNNER_HOME"] },
+    "lint": { "env": ["LLMBENCH_RUNNER_HOME"] },
+    "test": { "env": ["LLMBENCH_RUNNER_HOME"] },
+    "test:coverage": { "env": ["LLMBENCH_RUNNER_HOME"] },
+    "typecheck": { "env": ["LLMBENCH_RUNNER_HOME"] }
+  },
+  "tags": ["app"]
+}

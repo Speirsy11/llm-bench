@@ -1,4 +1,4 @@
-import { appendFile, readFile } from "node:fs/promises";
+import { appendFile, chmod, readFile } from "node:fs/promises";
 
 import type { BenchmarkEvent } from "@llm-bench/contracts";
 import { BenchmarkEventSchema } from "@llm-bench/contracts";
@@ -14,7 +14,11 @@ export class JsonlEventSpool {
   /** Validates and appends a single event as one JSONL line. */
   async append(event: BenchmarkEvent): Promise<void> {
     const validated = BenchmarkEventSchema.parse(event);
-    await appendFile(this.filePath, `${JSON.stringify(validated)}\n`, "utf8");
+    await appendFile(this.filePath, `${JSON.stringify(validated)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+    await chmod(this.filePath, 0o600);
   }
 
   /** Reads every spooled event, rejecting any line that fails validation. */

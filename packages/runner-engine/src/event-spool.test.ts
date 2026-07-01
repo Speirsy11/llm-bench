@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -52,6 +52,7 @@ describe("JsonlEventSpool", () => {
 
     const lines = (await readFile(file, "utf8")).trimEnd().split("\n");
     expect(lines).toHaveLength(2);
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
   });
 
   it("rejects an event that violates the contract schema", async () => {

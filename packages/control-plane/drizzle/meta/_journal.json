@@ -22,6 +22,27 @@
       "when": 1782850077928,
       "tag": "0002_unique-user-email",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1782866428649,
+      "tag": "0003_worried_prism",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1782866509057,
+      "tag": "0004_violet_miss_america",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1782866524228,
+      "tag": "0005_boring_mathemanic",
+      "breakpoints": true
     }
   ]
 }

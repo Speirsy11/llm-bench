@@ -1,0 +1,40 @@
+{
+  "name": "@speirsy11/llm-bench-runner",
+  "version": "0.0.0",
+  "type": "module",
+  "bin": {
+    "llm-bench-runner": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist', { force: true, recursive: true })\" && tsc --noEmit && esbuild src/cli.ts --bundle --platform=node --format=esm --banner:js='#!/usr/bin/env node' --outfile=dist/cli.js && chmod 755 dist/cli.js",
+    "clean": "git clean -xdf .cache .turbo dist node_modules",
+    "format": "prettier --check . --ignore-path ../../.gitignore",
+    "lint": "eslint --flag unstable_native_nodejs_ts_config --cache --cache-location .cache/.eslintcache",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@llm-bench/contracts": "workspace:*",
+    "@llm-bench/eslint-config": "workspace:*",
+    "@llm-bench/prettier-config": "workspace:*",
+    "@llm-bench/repository-repair": "workspace:*",
+    "@llm-bench/runner-engine": "workspace:*",
+    "@llm-bench/tsconfig": "workspace:*",
+    "@llm-bench/vitest-config": "workspace:*",
+    "@types/node": "catalog:",
+    "@vercel/blob": "2.5.0",
+    "@vitest/coverage-v8": "catalog:",
+    "esbuild": "0.25.11",
+    "eslint": "catalog:",
+    "prettier": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "prettier": "@llm-bench/prettier-config"
+}

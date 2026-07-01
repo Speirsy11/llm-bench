@@ -7,13 +7,19 @@ export const WORKSPACE_SCOPE = "@llm-bench";
 /** The private root package is unscoped by convention. */
 export const ROOT_PACKAGE_NAME = "llm-bench";
 
+/** Public packages use the owner scope promised by the product contract. */
+export const PUBLISHED_PACKAGE_NAMES = new Set([
+  "@speirsy11/llm-bench-runner",
+  "@speirsy11/llm-bench-harness-sdk",
+]);
+
 /**
  * Validate a single workspace package name against the LLMBench scope policy.
  * Returns a list of human-readable issues; an empty list means the name is
  * valid. The root package is allowed to remain unscoped.
  */
 export function validateWorkspaceName(name: string): string[] {
-  if (name === ROOT_PACKAGE_NAME) {
+  if (name === ROOT_PACKAGE_NAME || PUBLISHED_PACKAGE_NAMES.has(name)) {
     return [];
   }
   if (!name.startsWith(`${WORKSPACE_SCOPE}/`)) {

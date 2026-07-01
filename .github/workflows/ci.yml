@@ -72,3 +72,19 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
+
+  runner-contract:
+    name: Runner contract (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup and install
+        uses: ./tooling/github/setup
+
+      - name: Runner contract tests
+        run: pnpm test:runner-contract

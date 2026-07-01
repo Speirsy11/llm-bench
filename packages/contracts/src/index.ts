@@ -12,3 +12,4 @@ export * from "./events";
 export * from "./benchmark";
 export * from "./harness";
 export * from "./wire";
+export * from "./runner-protocol";

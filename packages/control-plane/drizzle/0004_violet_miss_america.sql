@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "runners_token_hash_unique" ON "runners" USING btree ("token_hash");

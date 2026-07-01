@@ -2,7 +2,7 @@
 
 LLMBench is an agentic-first benchmarking platform for comparing models, harnesses, and toolsets under reproducible conditions.
 
-The `tooling/` and `turbo/` directories provide the shared quality baseline used by every product package. `@llm-bench/contracts` (EPIC-02) defines the provider-neutral vocabulary — benchmarks, harnesses, metrics, manifests, events, and the versioned wire protocol — that every later package builds on. `@llm-bench/runner-engine` and `@llm-bench/repository-repair` (EPIC-03) prove one repository-repair task end to end locally: an ephemeral, path-contained workspace runs a deterministic harness, hidden tests grade the result independently, and the workspace is cleaned up. `@llm-bench/control-plane` and `@llm-bench/web` (EPIC-04) add Neon persistence, Auth.js GitHub identity, owner-only private records, administrator curation, and the public/private application shells.
+The `tooling/` and `turbo/` directories provide the shared quality baseline used by every product package. `@llm-bench/contracts` (EPIC-02) defines the provider-neutral vocabulary — benchmarks, harnesses, metrics, manifests, events, and the versioned wire protocol — that every later package builds on. `@llm-bench/runner-engine` and `@llm-bench/repository-repair` (EPIC-03) prove one repository-repair task end to end locally: an ephemeral, path-contained workspace runs a deterministic harness, hidden tests grade the result independently, and the workspace is cleaned up. `@llm-bench/control-plane` and `@llm-bench/web` (EPIC-04) add Neon persistence, Auth.js GitHub identity, owner-only private records, administrator curation, and the public/private application shells. `@speirsy11/llm-bench-runner` (EPIC-05) adds device-code pairing, a durable one-job worker, versioned runner HTTP endpoints, and private direct artifact uploads.
 
 ## Prerequisites
 
@@ -28,7 +28,7 @@ Packages are organised by architectural boundary, enforced by `pnpm boundaries`:
 | `app`         | foundation, service, feature, composition, tooling |
 | `tooling`     | tooling                                            |
 
-Every package uses the `@llm-bench` npm scope. Scaffold new packages with `pnpm turbo gen init`.
+Internal packages use the `@llm-bench` npm scope. The explicitly published runner and harness SDK use the `@speirsy11` scope. Scaffold new internal packages with `pnpm turbo gen init`.
 
 ## Commands
 
@@ -42,6 +42,7 @@ Every package uses the `@llm-bench` npm scope. Scaffold new packages with `pnpm 
 | `pnpm test`          | Vitest suites                                 |
 | `pnpm test:coverage` | Vitest suites with V8 coverage and thresholds |
 | `pnpm test:integration` | Real PostgreSQL integration suites         |
+| `pnpm test:runner-contract` | Runner contracts on macOS or Linux     |
 | `pnpm db:migrate`    | Apply checked-in Drizzle migrations           |
 | `pnpm db:test:reset` | Reset only a database explicitly named test   |
 | `pnpm build`         | Turbo build graph                             |
