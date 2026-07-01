@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@llm-bench/control-plane": "workspace:*",
+    "@vercel/blob": "2.5.0",
     "next": "16.2.9",
     "next-auth": "5.0.0-beta.31",
     "react": "19.2.7",
@@ -32,9 +33,11 @@
     "@types/node": "catalog:",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
+    "@types/react-test-renderer": "19.1.0",
     "@vitest/coverage-v8": "catalog:",
     "eslint": "catalog:",
     "prettier": "catalog:",
+    "react-test-renderer": "19.2.7",
     "tailwindcss": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

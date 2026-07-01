@@ -23,6 +23,7 @@
     "test": "turbo run test",
     "test:coverage": "turbo run test:coverage",
     "test:integration": "turbo run test:integration",
+    "test:runner-contract": "turbo run test --filter=@speirsy11/llm-bench-runner",
     "test:watch": "turbo run test:watch",
     "typecheck": "turbo run typecheck"
   },

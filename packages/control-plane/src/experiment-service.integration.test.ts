@@ -168,6 +168,8 @@ describe("database migrations", () => {
         "jobs",
         "metrics",
         "results",
+        "runner_events",
+        "runner_pairings",
         "runners",
         "sessions",
         "targets",

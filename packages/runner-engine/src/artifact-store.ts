@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { Artifact } from "@llm-bench/contracts";
@@ -36,8 +36,10 @@ export class FileArtifactStore implements ArtifactStore {
       mediaType: request.mediaType,
     };
     const destination = this.locate(artifact);
-    await mkdir(path.dirname(destination), { recursive: true });
-    await writeFile(destination, request.bytes);
+    await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
+    await chmod(path.dirname(destination), 0o700);
+    await writeFile(destination, request.bytes, { mode: 0o600 });
+    await chmod(destination, 0o600);
     return artifact;
   }
 

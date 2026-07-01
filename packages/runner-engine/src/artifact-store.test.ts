@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -53,6 +53,9 @@ describe("FileArtifactStore", () => {
     });
 
     expect(await readFile(artifactStore.locate(artifact))).toEqual(bytes);
+    expect((await stat(artifactStore.locate(artifact))).mode & 0o777).toBe(
+      0o600,
+    );
   });
 
   it("gives identical content the same id and distinct content different ids", async () => {

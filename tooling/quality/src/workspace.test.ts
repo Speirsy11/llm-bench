@@ -22,6 +22,10 @@ describe("validateWorkspaceName", () => {
     expect(validateWorkspaceName("llm-bench")).toEqual([]);
   });
 
+  it("accepts the explicitly published runner package", () => {
+    expect(validateWorkspaceName("@speirsy11/llm-bench-runner")).toEqual([]);
+  });
+
   it("rejects names under a foreign scope", () => {
     expect(validateWorkspaceName("@charlie/eslint-config")).toEqual([
       'Package "@charlie/eslint-config" must use the "@llm-bench/" scope.',
