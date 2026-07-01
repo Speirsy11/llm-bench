@@ -97,7 +97,7 @@ describe("sealed credentials", () => {
     });
 
     const bytes = Buffer.from(sealed.ciphertext, "base64");
-    bytes[bytes.length - 1] ^= 0x01;
+    bytes[bytes.length - 1]! ^= 0x01;
     const tampered = { ...sealed, ciphertext: bytes.toString("base64") };
 
     await expect(openCredential(tampered, runner)).rejects.toMatchObject({

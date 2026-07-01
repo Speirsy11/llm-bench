@@ -25,7 +25,7 @@ describe("OpenRouterProvider", () => {
     });
     await provider.complete(request);
 
-    const [url, init] = fetchMock.mock.calls[0]!;
+    const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
     expect(url).toBe(`${OPENROUTER_BASE_URL}/chat/completions`);
     const headers = init.headers as Record<string, string>;
     expect(headers["HTTP-Referer"]).toBe("https://llmbench.dev");
@@ -41,7 +41,7 @@ describe("OpenRouterProvider", () => {
       baseUrl: "https://proxy.test/v1",
     });
     await provider.complete(request);
-    const [url, init] = fetchMock.mock.calls[0]!;
+    const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
     expect(url).toBe("https://proxy.test/v1/chat/completions");
     const headers = init.headers as Record<string, string>;
     expect(headers["HTTP-Referer"]).toBeUndefined();

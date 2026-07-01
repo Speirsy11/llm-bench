@@ -35,7 +35,7 @@ describe("OpenAICompatibleProvider.complete", () => {
     const result = await provider.complete(request);
     expect(result.content).toBe("hello");
 
-    const [url, init] = fetchMock.mock.calls[0]!;
+    const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
     expect(url).toBe("https://example.test/v1/chat/completions");
     const headers = init.headers as Record<string, string>;
     expect(headers.authorization).toBe("Bearer sk-secret-canary");
@@ -52,7 +52,8 @@ describe("OpenAICompatibleProvider.complete", () => {
       fetch: fetchMock,
     });
     await provider.complete(request);
-    const headers = fetchMock.mock.calls[0]![1].headers as Record<string, string>;
+    const init2 = (fetchMock.mock.calls[0]! as unknown as [string, RequestInit])[1];
+    const headers = init2.headers as Record<string, string>;
     expect(headers.authorization).toBe("Bearer sk-plain");
   });
 
