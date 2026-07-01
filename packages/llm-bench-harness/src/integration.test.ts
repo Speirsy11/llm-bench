@@ -25,7 +25,10 @@ function fixtureFetch(capture: { authorization?: string; body?: string }) {
         JSON.stringify({
           model: "anthropic/claude-3.5-sonnet",
           choices: [
-            { message: { content: "The answer is 42." }, finish_reason: "stop" },
+            {
+              message: { content: "The answer is 42." },
+              finish_reason: "stop",
+            },
           ],
           usage: { prompt_tokens: 12, completion_tokens: 6, total_tokens: 18 },
         }),

@@ -136,13 +136,11 @@ describe("OpenAICompatibleProvider.complete", () => {
   });
 
   it("uses the global fetch when none is injected", async () => {
-    const spy = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(
-        jsonResponse({
-          choices: [{ message: { content: "g" }, finish_reason: "stop" }],
-        }),
-      );
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        choices: [{ message: { content: "g" }, finish_reason: "stop" }],
+      }),
+    );
     const provider = new OpenAICompatibleProvider({
       baseUrl: "https://example.test/v1",
       apiKey: "sk",
