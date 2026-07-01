@@ -75,7 +75,7 @@ export async function openCredential(
   sealed: SealedCredential,
   identity: RunnerIdentity,
 ): Promise<Secret> {
-  if (sealed.algorithm !== SEALED_BOX_ALGORITHM) {
+  if ((sealed.algorithm as string) !== SEALED_BOX_ALGORITHM) {
     throw new SealedCredentialError(
       `Unsupported sealed credential algorithm.`,
       "unsupported-algorithm",
@@ -87,7 +87,9 @@ export async function openCredential(
       "wrong-runner",
     );
   }
-  if (sealed.keyFingerprint !== (await fingerprintPublicKey(identity.publicKey))) {
+  if (
+    sealed.keyFingerprint !== (await fingerprintPublicKey(identity.publicKey))
+  ) {
     throw new SealedCredentialError(
       `Sealed credential was sealed to a different key.`,
       "wrong-key",
@@ -138,17 +140,18 @@ function parsePayload(raw: string): SealedPayload {
       "tampered",
     );
   }
+  const payload = parsed as Partial<SealedPayload>;
   if (
     typeof parsed !== "object" ||
     parsed === null ||
-    (parsed as SealedPayload).v !== SEALED_VERSION ||
-    typeof (parsed as SealedPayload).runnerId !== "string" ||
-    typeof (parsed as SealedPayload).secret !== "string"
+    payload.v !== SEALED_VERSION ||
+    typeof payload.runnerId !== "string" ||
+    typeof payload.secret !== "string"
   ) {
     throw new SealedCredentialError(
       `Sealed credential payload is malformed.`,
       "tampered",
     );
   }
-  return parsed as SealedPayload;
+  return payload as SealedPayload;
 }

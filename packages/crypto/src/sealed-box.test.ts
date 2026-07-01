@@ -3,7 +3,11 @@ import { describe, expect, it } from "vitest";
 import type { RunnerIdentity, SealedCredential } from "./types";
 import { fingerprintPublicKey, generateRunnerKeyPair } from "./keys";
 import { REDACTION_MARKER, Secret } from "./redaction";
-import { openCredential, sealCredential, SealedCredentialError } from "./sealed-box";
+import {
+  openCredential,
+  sealCredential,
+  SealedCredentialError,
+} from "./sealed-box";
 import { getSodium } from "./sodium";
 import { SEALED_BOX_ALGORITHM } from "./types";
 
@@ -97,7 +101,9 @@ describe("sealed credentials", () => {
     });
 
     const bytes = Buffer.from(sealed.ciphertext, "base64");
-    bytes[bytes.length - 1]! ^= 0x01;
+    const lastByte = bytes.at(-1);
+    if (lastByte === undefined) throw new Error("ciphertext was empty");
+    bytes[bytes.length - 1] = lastByte ^ 0x01;
     const tampered = { ...sealed, ciphertext: bytes.toString("base64") };
 
     await expect(openCredential(tampered, runner)).rejects.toMatchObject({
@@ -126,7 +132,11 @@ describe("sealed credentials", () => {
     const runner = await makeRunner("runner-a");
     const ciphertext = await sealRaw(
       runner.publicKey,
-      JSON.stringify({ v: 1, runnerId: "someone-else", secret: OPENROUTER_KEY }),
+      JSON.stringify({
+        v: 1,
+        runnerId: "someone-else",
+        secret: OPENROUTER_KEY,
+      }),
     );
     await expect(
       openCredential(await envelope(runner, ciphertext), runner),
@@ -136,7 +146,10 @@ describe("sealed credentials", () => {
   it("rejects malformed decrypted payloads", async () => {
     const runner = await makeRunner("runner-a");
 
-    const notJson = await envelope(runner, await sealRaw(runner.publicKey, "nope"));
+    const notJson = await envelope(
+      runner,
+      await sealRaw(runner.publicKey, "nope"),
+    );
     await expect(openCredential(notJson, runner)).rejects.toMatchObject({
       reason: "tampered",
     });
@@ -167,7 +180,7 @@ describe("sealed credentials", () => {
     expect(JSON.stringify({ apiKey: secret })).toBe(
       `{"apiKey":"${REDACTION_MARKER}"}`,
     );
-    expect(`${secret}`).not.toContain("canary");
+    expect(String(secret)).not.toContain("canary");
     expect(secret.reveal()).toBe(OPENROUTER_KEY);
   });
 });

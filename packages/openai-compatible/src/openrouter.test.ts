@@ -9,14 +9,16 @@ const request = {
 
 function okResponse(): Response {
   return new Response(
-    JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }] }),
+    JSON.stringify({
+      choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+    }),
     { status: 200, headers: { "content-type": "application/json" } },
   );
 }
 
 describe("OpenRouterProvider", () => {
   it("targets the OpenRouter gateway and sends attribution headers", async () => {
-    const fetchMock = vi.fn(async () => okResponse());
+    const fetchMock = vi.fn(() => Promise.resolve(okResponse()));
     const provider = new OpenRouterProvider({
       apiKey: "sk-or-key",
       fetch: fetchMock,
@@ -25,7 +27,10 @@ describe("OpenRouterProvider", () => {
     });
     await provider.complete(request);
 
-    const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
     expect(url).toBe(`${OPENROUTER_BASE_URL}/chat/completions`);
     const headers = init.headers as Record<string, string>;
     expect(headers["HTTP-Referer"]).toBe("https://llmbench.dev");
@@ -34,14 +39,17 @@ describe("OpenRouterProvider", () => {
   });
 
   it("omits attribution headers when not provided and allows a base url override", async () => {
-    const fetchMock = vi.fn(async () => okResponse());
+    const fetchMock = vi.fn(() => Promise.resolve(okResponse()));
     const provider = new OpenRouterProvider({
       apiKey: "sk-or-key",
       fetch: fetchMock,
       baseUrl: "https://proxy.test/v1",
     });
     await provider.complete(request);
-    const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
     expect(url).toBe("https://proxy.test/v1/chat/completions");
     const headers = init.headers as Record<string, string>;
     expect(headers["HTTP-Referer"]).toBeUndefined();

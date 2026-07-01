@@ -4,8 +4,8 @@ import type {
   ToolDefinition,
   Usage,
 } from "@llm-bench/openai-compatible";
-import { ProviderError } from "@llm-bench/openai-compatible";
 import { redactSecrets } from "@llm-bench/crypto";
+import { ProviderError } from "@llm-bench/openai-compatible";
 
 import type {
   AgentTool,
@@ -49,7 +49,9 @@ export class LlmBenchHarness {
 
   constructor(config: HarnessConfig) {
     this.#config = config;
-    this.#tools = new Map((config.tools ?? []).map((tool) => [tool.definition.name, tool]));
+    this.#tools = new Map(
+      (config.tools ?? []).map((tool) => [tool.definition.name, tool]),
+    );
     this.#toolDefinitions = (config.tools ?? []).map((tool) => tool.definition);
     this.#now = config.now ?? Date.now;
     this.#secrets = config.secrets ?? [];
@@ -67,13 +69,16 @@ export class LlmBenchHarness {
     const events: HarnessEvent[] = [];
     const usage = new UsageAccumulator();
     const controller = new AbortController();
-    let timedOut = false;
+    const timerState: { timedOut: boolean } = { timedOut: false };
     const onAbort = (): void => controller.abort();
     this.#config.signal?.addEventListener("abort", onAbort, { once: true });
-    const timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, Math.max(0, deadline - this.#now()));
+    const timer = setTimeout(
+      () => {
+        timerState.timedOut = true;
+        controller.abort();
+      },
+      Math.max(0, deadline - this.#now()),
+    );
 
     let turns = 0;
     let toolCalls = 0;
@@ -95,16 +100,17 @@ export class LlmBenchHarness {
             {
               model,
               messages,
-              tools: this.#toolDefinitions.length > 0 ? this.#toolDefinitions : undefined,
+              tools: this.#toolDefinitions,
             },
             { signal: controller.signal },
           );
         } catch (caught) {
           if (isAbortError(caught)) {
-            status = timedOut ? "timeout" : "cancelled";
+            status = timerState.timedOut ? "timeout" : "cancelled";
           } else {
             status = "error";
-            error = caught instanceof ProviderError ? caught.message : String(caught);
+            error =
+              caught instanceof ProviderError ? caught.message : String(caught);
           }
           break;
         }
@@ -190,7 +196,13 @@ export class LlmBenchHarness {
         toolCallId: call.id,
         name: call.name,
       });
-      this.#emit(events, { type: "tool-result", id: call.id, name: call.name, content, ok });
+      this.#emit(events, {
+        type: "tool-result",
+        id: call.id,
+        name: call.name,
+        content,
+        ok,
+      });
     }
     return null;
   }
@@ -204,7 +216,10 @@ export class LlmBenchHarness {
       return { content: `Unknown tool: ${call.name}`, ok: false };
     }
     try {
-      const content = await tool.execute(call.arguments, { root: this.#config.root, signal });
+      const content = await tool.execute(call.arguments, {
+        root: this.#config.root,
+        signal,
+      });
       return { content, ok: true };
     } catch (caught) {
       return {
@@ -240,7 +255,10 @@ export class LlmBenchHarness {
   }
 
   #redactMessage(message: ChatMessage): ChatMessage {
-    const redacted: ChatMessage = { ...message, content: this.#redact(message.content) };
+    const redacted: ChatMessage = {
+      ...message,
+      content: this.#redact(message.content),
+    };
     if (message.toolCalls !== undefined) {
       redacted.toolCalls = message.toolCalls.map((call) => ({
         ...call,
@@ -275,7 +293,10 @@ class UsageAccumulator {
   }
 }
 
-function accumulate(current: number | null, next: number | null): number | null {
+function accumulate(
+  current: number | null,
+  next: number | null,
+): number | null {
   if (next === null) return current;
   return (current ?? 0) + next;
 }

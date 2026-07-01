@@ -12,17 +12,26 @@ let tools: Map<string, AgentTool>;
 let context: ToolContext;
 
 function tool(name: string): AgentTool {
-  const found = tools.get(name);
+  return getTool(tools, name);
+}
+
+function getTool(map: Map<string, AgentTool>, name: string): AgentTool {
+  const found = map.get(name);
   if (found === undefined) throw new Error(`missing tool ${name}`);
   return found;
 }
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "llm-bench-repo-"));
-  tools = new Map(createRepositoryTools(root).map((t) => [t.definition.name, t]));
+  tools = new Map(
+    createRepositoryTools(root).map((t) => [t.definition.name, t]),
+  );
   context = { root, signal: new AbortController().signal };
   await mkdir(join(root, "src"));
-  await writeFile(join(root, "src", "a.ts"), "export const a = 1;\nconst secret = 2;\n");
+  await writeFile(
+    join(root, "src", "a.ts"),
+    "export const a = 1;\nconst secret = 2;\n",
+  );
   await writeFile(join(root, "README.md"), "# Title\n");
   await mkdir(join(root, "node_modules"));
   await writeFile(join(root, "node_modules", "junk.ts"), "secret\n");
@@ -30,18 +39,25 @@ beforeEach(async () => {
 
 describe("read_file", () => {
   it("reads a contained file", async () => {
-    expect(await tool("read_file").execute(JSON.stringify({ path: "README.md" }), context)).toBe(
-      "# Title\n",
-    );
+    expect(
+      await tool("read_file").execute(
+        JSON.stringify({ path: "README.md" }),
+        context,
+      ),
+    ).toBe("# Title\n");
   });
 
   it("truncates large files", async () => {
     const tools2 = new Map(
-      createRepositoryTools(root, { maxReadBytes: 4 }).map((t) => [t.definition.name, t]),
+      createRepositoryTools(root, { maxReadBytes: 4 }).map((t) => [
+        t.definition.name,
+        t,
+      ]),
     );
-    const result = await tools2
-      .get("read_file")!
-      .execute(JSON.stringify({ path: "README.md" }), context);
+    const result = await getTool(tools2, "read_file").execute(
+      JSON.stringify({ path: "README.md" }),
+      context,
+    );
     expect(result).toBe("# Ti\n[truncated]");
   });
 
@@ -49,12 +65,12 @@ describe("read_file", () => {
     await expect(
       tool("read_file").execute(JSON.stringify({ path: "../escape" }), context),
     ).rejects.toBeInstanceOf(PathEscapeError);
-    await expect(tool("read_file").execute("{bad", context)).rejects.toBeInstanceOf(
-      ToolInputError,
-    );
-    await expect(tool("read_file").execute(JSON.stringify([]), context)).rejects.toThrow(
-      /must be a JSON object/,
-    );
+    await expect(
+      tool("read_file").execute("{bad", context),
+    ).rejects.toBeInstanceOf(ToolInputError);
+    await expect(
+      tool("read_file").execute(JSON.stringify([]), context),
+    ).rejects.toThrow(/must be a JSON object/);
     await expect(
       tool("read_file").execute(JSON.stringify({ path: 1 }), context),
     ).rejects.toThrow(/must be a string/);
@@ -95,7 +111,10 @@ describe("search_files", () => {
 
   it("reports when nothing matches", async () => {
     expect(
-      await tool("search_files").execute(JSON.stringify({ query: "zzz" }), context),
+      await tool("search_files").execute(
+        JSON.stringify({ query: "zzz" }),
+        context,
+      ),
     ).toBe("No matches found.");
   });
 
@@ -113,9 +132,10 @@ describe("search_files", () => {
         t,
       ]),
     );
-    const result = await tools2
-      .get("search_files")!
-      .execute(JSON.stringify({ query: "hit" }), context);
+    const result = await getTool(tools2, "search_files").execute(
+      JSON.stringify({ query: "hit" }),
+      context,
+    );
     expect(result.split("\n")).toHaveLength(3);
   });
 
@@ -127,9 +147,10 @@ describe("search_files", () => {
         t,
       ]),
     );
-    const result = await tools2
-      .get("search_files")!
-      .execute(JSON.stringify({ query: "secret" }), context);
+    const result = await getTool(tools2, "search_files").execute(
+      JSON.stringify({ query: "secret" }),
+      context,
+    );
     expect(result).not.toContain("big.txt");
   });
 
@@ -147,7 +168,11 @@ describe("search_files", () => {
 describe("apply_patch", () => {
   it("replaces a unique snippet", async () => {
     const result = await tool("apply_patch").execute(
-      JSON.stringify({ path: "README.md", oldText: "Title", newText: "Heading" }),
+      JSON.stringify({
+        path: "README.md",
+        oldText: "Title",
+        newText: "Heading",
+      }),
       context,
     );
     expect(result).toBe("Patched README.md.");
@@ -156,10 +181,16 @@ describe("apply_patch", () => {
 
   it("creates a new file when oldText is empty", async () => {
     await tool("apply_patch").execute(
-      JSON.stringify({ path: "src/new.ts", oldText: "", newText: "export const x = 1;" }),
+      JSON.stringify({
+        path: "src/new.ts",
+        oldText: "",
+        newText: "export const x = 1;",
+      }),
       context,
     );
-    expect(await readFile(join(root, "src", "new.ts"), "utf8")).toBe("export const x = 1;");
+    expect(await readFile(join(root, "src", "new.ts"), "utf8")).toBe(
+      "export const x = 1;",
+    );
   });
 
   it("fails when the snippet is missing or ambiguous", async () => {

@@ -40,7 +40,8 @@ class ScriptedProvider implements HarnessProvider {
     this.lastRequest = request;
     if (options.signal?.aborted) throw abortError();
     const step = this.steps[this.calls++];
-    if (step === undefined) throw new Error("provider ran out of scripted steps");
+    if (step === undefined)
+      throw new Error("provider ran out of scripted steps");
     if (typeof step === "function") return step();
     if (step instanceof Error) throw step;
     return step;
@@ -59,7 +60,9 @@ function echoTool(): AgentTool {
       parameters: { type: "object", properties: { text: { type: "string" } } },
     },
     execute: (rawArguments) =>
-      Promise.resolve(String((JSON.parse(rawArguments) as { text: string }).text)),
+      Promise.resolve(
+        String((JSON.parse(rawArguments) as { text: string }).text),
+      ),
   };
 }
 
@@ -76,12 +79,20 @@ describe("LlmBenchHarness", () => {
       systemPrompt: "be helpful",
     });
 
-    const result = await harness.run({ messages: [{ role: "user", content: "hi" }] });
+    const result = await harness.run({
+      messages: [{ role: "user", content: "hi" }],
+    });
 
     expect(result.status).toBe("completed");
     expect(result.turns).toBe(1);
-    expect(result.messages[0]).toEqual({ role: "system", content: "be helpful" });
-    expect(result.messages.at(-1)).toMatchObject({ role: "assistant", content: "done" });
+    expect(result.messages[0]).toEqual({
+      role: "system",
+      content: "be helpful",
+    });
+    expect(result.messages.at(-1)).toMatchObject({
+      role: "assistant",
+      content: "done",
+    });
     expect(result.events.at(-1)).toEqual({ type: "stop", reason: "completed" });
   });
 
@@ -104,13 +115,23 @@ describe("LlmBenchHarness", () => {
       limits,
     });
 
-    const result = await harness.run({ messages: [{ role: "user", content: "hi" }] });
+    const result = await harness.run({
+      messages: [{ role: "user", content: "hi" }],
+    });
 
     expect(result.status).toBe("completed");
     expect(result.toolCalls).toBe(1);
-    expect(result.usage).toEqual({ promptTokens: 14, completionTokens: 6, totalTokens: 20 });
+    expect(result.usage).toEqual({
+      promptTokens: 14,
+      completionTokens: 6,
+      totalTokens: 20,
+    });
     const toolResult = result.events.find((e) => e.type === "tool-result");
-    expect(toolResult).toMatchObject({ name: "echo", content: "pong", ok: true });
+    expect(toolResult).toMatchObject({
+      name: "echo",
+      content: "pong",
+      ok: true,
+    });
     expect(provider.lastRequest?.tools).toHaveLength(1);
   });
 
@@ -132,9 +153,14 @@ describe("LlmBenchHarness", () => {
       limits,
     });
 
-    const result = await harness.run({ messages: [{ role: "user", content: "hi" }] });
+    const result = await harness.run({
+      messages: [{ role: "user", content: "hi" }],
+    });
     const results = result.events.filter((e) => e.type === "tool-result");
-    expect(results[0]).toMatchObject({ ok: false, content: "Unknown tool: missing" });
+    expect(results[0]).toMatchObject({
+      ok: false,
+      content: "Unknown tool: missing",
+    });
     expect(results[1]).toMatchObject({ ok: false });
     expect(result.status).toBe("completed");
   });
@@ -142,7 +168,9 @@ describe("LlmBenchHarness", () => {
   it("stops at the turn limit", async () => {
     const provider = new ScriptedProvider(
       Array.from({ length: 3 }, () =>
-        completion({ toolCalls: [{ id: "c", name: "echo", arguments: '{"text":"x"}' }] }),
+        completion({
+          toolCalls: [{ id: "c", name: "echo", arguments: '{"text":"x"}' }],
+        }),
       ),
     );
     const harness = new LlmBenchHarness({
@@ -152,7 +180,9 @@ describe("LlmBenchHarness", () => {
       tools: [echoTool()],
       limits: { maxTurns: 2, maxToolCalls: 10, maxDurationMs: 60_000 },
     });
-    const result = await harness.run({ messages: [{ role: "user", content: "hi" }] });
+    const result = await harness.run({
+      messages: [{ role: "user", content: "hi" }],
+    });
     expect(result.status).toBe("max_turns");
     expect(result.turns).toBe(2);
   });
@@ -177,19 +207,26 @@ describe("LlmBenchHarness", () => {
       // tool-2-halt(2000 → past the 1000 deadline).
       now: () => {
         const times = [0, 0, 0, 0, 2000];
-        const value = times[Math.min(clock, times.length - 1)]!;
+        const value = times.at(Math.min(clock, times.length - 1));
+        if (value === undefined) throw new Error("clock overflow");
         clock += 1;
         return value;
       },
     });
-    const result = await harness.run({ messages: [{ role: "user", content: "hi" }] });
+    const result = await harness.run({
+      messages: [{ role: "user", content: "hi" }],
+    });
     expect(result.status).toBe("timeout");
     expect(result.toolCalls).toBe(1);
   });
 
   it("stringifies non-Error tool rejections", async () => {
     const throwingTool: AgentTool = {
-      definition: { name: "boom", description: "b", parameters: { type: "object" } },
+      definition: {
+        name: "boom",
+        description: "b",
+        parameters: { type: "object" },
+      },
       execute: () =>
         Promise.reject({
           toString: () => "plain string failure",
@@ -206,9 +243,14 @@ describe("LlmBenchHarness", () => {
       tools: [throwingTool],
       limits,
     });
-    const result = await harness.run({ messages: [{ role: "user", content: "hi" }] });
+    const result = await harness.run({
+      messages: [{ role: "user", content: "hi" }],
+    });
     const toolResult = result.events.find((e) => e.type === "tool-result");
-    expect(toolResult).toMatchObject({ ok: false, content: "plain string failure" });
+    expect(toolResult).toMatchObject({
+      ok: false,
+      content: "plain string failure",
+    });
   });
 
   it("stops at the tool-call limit", async () => {
@@ -227,7 +269,9 @@ describe("LlmBenchHarness", () => {
       tools: [echoTool()],
       limits: { maxTurns: 5, maxToolCalls: 1, maxDurationMs: 60_000 },
     });
-    const result = await harness.run({ messages: [{ role: "user", content: "hi" }] });
+    const result = await harness.run({
+      messages: [{ role: "user", content: "hi" }],
+    });
     expect(result.status).toBe("max_tool_calls");
     expect(result.toolCalls).toBe(1);
   });
@@ -243,7 +287,9 @@ describe("LlmBenchHarness", () => {
       limits,
       signal: controller.signal,
     });
-    const result = await harness.run({ messages: [{ role: "user", content: "hi" }] });
+    const result = await harness.run({
+      messages: [{ role: "user", content: "hi" }],
+    });
     expect(result.status).toBe("cancelled");
     expect(result.turns).toBe(0);
     expect(provider.calls).toBe(0);
@@ -257,14 +303,18 @@ describe("LlmBenchHarness", () => {
       root: "/repo",
       limits,
     });
-    const result = await harness.run({ messages: [{ role: "user", content: "hi" }] });
+    const result = await harness.run({
+      messages: [{ role: "user", content: "hi" }],
+    });
     expect(result.status).toBe("cancelled");
   });
 
   it("times out between turns using the injected clock", async () => {
     let clock = 0;
     const provider = new ScriptedProvider([
-      completion({ toolCalls: [{ id: "c", name: "echo", arguments: '{"text":"x"}' }] }),
+      completion({
+        toolCalls: [{ id: "c", name: "echo", arguments: '{"text":"x"}' }],
+      }),
       completion({ content: "never reached" }),
     ]);
     const harness = new LlmBenchHarness({
@@ -279,14 +329,18 @@ describe("LlmBenchHarness", () => {
         return value;
       },
     });
-    const result = await harness.run({ messages: [{ role: "user", content: "hi" }] });
+    const result = await harness.run({
+      messages: [{ role: "user", content: "hi" }],
+    });
     expect(result.status).toBe("timeout");
   });
 
   it("times out when the deadline fires during a provider call", async () => {
     const provider = new ScriptedProvider([
       (): Promise<CompletionResult> =>
-        new Promise((_resolve, reject) => setTimeout(() => reject(abortError()), 40)),
+        new Promise((_resolve, reject) =>
+          setTimeout(() => reject(abortError()), 40),
+        ),
     ]);
     const harness = new LlmBenchHarness({
       provider,
@@ -294,7 +348,9 @@ describe("LlmBenchHarness", () => {
       root: "/repo",
       limits: { maxTurns: 5, maxToolCalls: 5, maxDurationMs: 5 },
     });
-    const result = await harness.run({ messages: [{ role: "user", content: "hi" }] });
+    const result = await harness.run({
+      messages: [{ role: "user", content: "hi" }],
+    });
     expect(result.status).toBe("timeout");
   });
 
@@ -302,17 +358,34 @@ describe("LlmBenchHarness", () => {
     const provider = new ScriptedProvider([
       new ProviderError("rate limited", "rate_limit", true, 429),
     ]);
-    const harness = new LlmBenchHarness({ provider, model: "m", root: "/repo", limits });
-    const result = await harness.run({ messages: [{ role: "user", content: "hi" }] });
+    const harness = new LlmBenchHarness({
+      provider,
+      model: "m",
+      root: "/repo",
+      limits,
+    });
+    const result = await harness.run({
+      messages: [{ role: "user", content: "hi" }],
+    });
     expect(result.status).toBe("error");
     expect(result.error).toBe("rate limited");
-    expect(result.events.at(-1)).toMatchObject({ type: "stop", reason: "error" });
+    expect(result.events.at(-1)).toMatchObject({
+      type: "stop",
+      reason: "error",
+    });
   });
 
   it("surfaces non-provider errors with a string message", async () => {
     const provider = new ScriptedProvider([new TypeError("boom")]);
-    const harness = new LlmBenchHarness({ provider, model: "m", root: "/repo", limits });
-    const result = await harness.run({ messages: [{ role: "user", content: "hi" }] });
+    const harness = new LlmBenchHarness({
+      provider,
+      model: "m",
+      root: "/repo",
+      limits,
+    });
+    const result = await harness.run({
+      messages: [{ role: "user", content: "hi" }],
+    });
     expect(result.status).toBe("error");
     expect(result.error).toContain("boom");
   });
@@ -322,7 +395,9 @@ describe("LlmBenchHarness", () => {
     const provider = new ScriptedProvider([
       completion({
         content: `leak ${secret}`,
-        toolCalls: [{ id: "c1", name: "echo", arguments: `{"text":"${secret}"}` }],
+        toolCalls: [
+          { id: "c1", name: "echo", arguments: `{"text":"${secret}"}` },
+        ],
       }),
       completion({ content: "ok" }),
     ]);
@@ -334,9 +409,14 @@ describe("LlmBenchHarness", () => {
       limits,
       secrets: [secret],
     });
-    const result = await harness.run({ messages: [{ role: "user", content: "hi" }] });
+    const result = await harness.run({
+      messages: [{ role: "user", content: "hi" }],
+    });
 
-    const serialized = JSON.stringify({ events: result.events, messages: result.messages });
+    const serialized = JSON.stringify({
+      events: result.events,
+      messages: result.messages,
+    });
     expect(serialized).not.toContain("sk-or-canary");
     expect(serialized).toContain("[redacted]");
   });
@@ -351,7 +431,9 @@ describe("LlmBenchHarness", () => {
       limits,
       secrets: [secret],
     });
-    const result = await harness.run({ messages: [{ role: "user", content: "hi" }] });
+    const result = await harness.run({
+      messages: [{ role: "user", content: "hi" }],
+    });
     expect(result.error).not.toContain("canary");
     const stop = result.events.at(-1);
     expect(stop).toMatchObject({ type: "stop", reason: "error" });
@@ -360,8 +442,15 @@ describe("LlmBenchHarness", () => {
 
   it("keeps usage null when the provider reports no metadata", async () => {
     const provider = new ScriptedProvider([completion({ content: "done" })]);
-    const harness = new LlmBenchHarness({ provider, model: "m", root: "/repo", limits });
-    const result = await harness.run({ messages: [{ role: "user", content: "hi" }] });
+    const harness = new LlmBenchHarness({
+      provider,
+      model: "m",
+      root: "/repo",
+      limits,
+    });
+    const result = await harness.run({
+      messages: [{ role: "user", content: "hi" }],
+    });
     expect(result.usage).toEqual(UNKNOWN_USAGE);
   });
 
@@ -382,7 +471,9 @@ describe("LlmBenchHarness", () => {
       limits,
       signal: controller.signal,
     });
-    const result = await harness.run({ messages: [{ role: "user", content: "hi" }] });
+    const result = await harness.run({
+      messages: [{ role: "user", content: "hi" }],
+    });
     expect(result.status).toBe("cancelled");
     expect(removeSpy).toHaveBeenCalled();
   });
@@ -397,7 +488,9 @@ describe("LlmBenchHarness", () => {
       limits,
       signal: controller.signal,
     });
-    const result = await harness.run({ messages: [{ role: "user", content: "hi" }] });
+    const result = await harness.run({
+      messages: [{ role: "user", content: "hi" }],
+    });
     expect(result.status).toBe("completed");
   });
 });

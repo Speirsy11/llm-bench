@@ -106,7 +106,9 @@ function listDirectoryTool(config: ResolvedConfig): AgentTool {
       const entries = await readdir(resolved, { withFileTypes: true });
       return entries
         .filter((entry) => !config.ignoredDirectories.includes(entry.name))
-        .map((entry) => `${entry.isDirectory() ? "dir " : "file"} ${entry.name}`)
+        .map(
+          (entry) => `${entry.isDirectory() ? "dir " : "file"} ${entry.name}`,
+        )
         .sort()
         .join("\n");
     },
@@ -126,15 +128,25 @@ function searchFilesTool(config: ResolvedConfig): AgentTool {
     },
     async execute(rawArguments, context) {
       const query = requireString(parseArguments(rawArguments).query, "query");
-      if (query.length === 0) throw new ToolInputError("`query` must not be empty.");
+      if (query.length === 0)
+        throw new ToolInputError("`query` must not be empty.");
       const matches: string[] = [];
-      await walk(context.root, context.root, config, context, (rel, content) => {
-        const lines = content.split("\n");
-        for (let i = 0; i < lines.length; i++) {
-          if (matches.length >= config.maxSearchResults) return;
-          if (lines[i]!.includes(query)) matches.push(`${rel}:${i + 1}: ${lines[i]!.trim()}`);
-        }
-      });
+      await walk(
+        context.root,
+        context.root,
+        config,
+        context,
+        (rel, content) => {
+          const lines = content.split("\n");
+          for (let i = 0; i < lines.length; i++) {
+            if (matches.length >= config.maxSearchResults) return;
+            const line = lines[i];
+            if (line === undefined) continue;
+            if (line.includes(query))
+              matches.push(`${rel}:${i + 1}: ${line.trim()}`);
+          }
+        },
+      );
       return matches.length > 0 ? matches.join("\n") : "No matches found.";
     },
   };
@@ -191,7 +203,8 @@ function applyPatchTool(): AgentTool {
       }
       const current = await readFile(resolved, "utf8");
       const occurrences = current.split(oldText).length - 1;
-      if (occurrences === 0) throw new ToolInputError("`oldText` was not found.");
+      if (occurrences === 0)
+        throw new ToolInputError("`oldText` was not found.");
       if (occurrences > 1) throw new ToolInputError("`oldText` is not unique.");
       await writeFile(resolved, current.replace(oldText, newText), "utf8");
       return `Patched ${path}.`;

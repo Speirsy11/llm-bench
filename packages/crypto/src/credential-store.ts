@@ -1,4 +1,11 @@
-import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
 import type { RunnerKeyPair, SealedCredential } from "./types";
@@ -29,7 +36,10 @@ export class RunnerCredentialStore {
     const raw = await this.readPrivate(this.keyPairPath());
     if (raw === null) return null;
     const value = raw as Partial<RunnerKeyPair>;
-    if (typeof value.publicKey !== "string" || typeof value.privateKey !== "string") {
+    if (
+      typeof value.publicKey !== "string" ||
+      typeof value.privateKey !== "string"
+    ) {
       throw new Error("Runner key pair file is malformed; re-pair the runner.");
     }
     return { publicKey: value.publicKey, privateKey: value.privateKey };
@@ -39,7 +49,7 @@ export class RunnerCredentialStore {
     name: string,
     sealed: SealedCredential,
   ): Promise<void> {
-    if (sealed.algorithm !== SEALED_BOX_ALGORITHM) {
+    if ((sealed.algorithm as string) !== SEALED_BOX_ALGORITHM) {
       throw new Error("Refusing to store credential with unknown algorithm.");
     }
     await this.writePrivateFile(this.sealedPath(name), sealed);
@@ -50,7 +60,6 @@ export class RunnerCredentialStore {
     if (raw === null) return null;
     const value = raw as Partial<SealedCredential>;
     if (
-      value.algorithm !== SEALED_BOX_ALGORITHM ||
       typeof value.runnerId !== "string" ||
       typeof value.keyFingerprint !== "string" ||
       typeof value.ciphertext !== "string"
@@ -58,7 +67,7 @@ export class RunnerCredentialStore {
       throw new Error(`Sealed credential ${name} is malformed.`);
     }
     return {
-      algorithm: value.algorithm,
+      algorithm: SEALED_BOX_ALGORITHM,
       runnerId: value.runnerId,
       keyFingerprint: value.keyFingerprint,
       ciphertext: value.ciphertext,

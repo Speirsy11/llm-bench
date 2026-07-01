@@ -19,12 +19,14 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 describe("OpenAICompatibleProvider.complete", () => {
   it("posts to the chat-completions endpoint and normalizes the result", async () => {
-    const fetchMock = vi.fn(async () =>
-      jsonResponse({
-        model: "openai/gpt-4o",
-        choices: [{ message: { content: "hello" }, finish_reason: "stop" }],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-      }),
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        jsonResponse({
+          model: "openai/gpt-4o",
+          choices: [{ message: { content: "hello" }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }),
+      ),
     );
     const provider = new OpenAICompatibleProvider({
       baseUrl: "https://example.test/v1/",
@@ -35,7 +37,9 @@ describe("OpenAICompatibleProvider.complete", () => {
     const result = await provider.complete(request);
     expect(result.content).toBe("hello");
 
-    const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
+    const call = fetchMock.mock.calls[0];
+    if (call === undefined) throw new Error("fetch was not called");
+    const [url, init] = call as unknown as [string, RequestInit];
     expect(url).toBe("https://example.test/v1/chat/completions");
     const headers = init.headers as Record<string, string>;
     expect(headers.authorization).toBe("Bearer sk-secret-canary");
@@ -43,8 +47,12 @@ describe("OpenAICompatibleProvider.complete", () => {
   });
 
   it("accepts a plain string api key", async () => {
-    const fetchMock = vi.fn(async () =>
-      jsonResponse({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }] }),
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        jsonResponse({
+          choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+        }),
+      ),
     );
     const provider = new OpenAICompatibleProvider({
       baseUrl: "https://example.test/v1",
@@ -52,7 +60,9 @@ describe("OpenAICompatibleProvider.complete", () => {
       fetch: fetchMock,
     });
     await provider.complete(request);
-    const init2 = (fetchMock.mock.calls[0]! as unknown as [string, RequestInit])[1];
+    const call = fetchMock.mock.calls[0];
+    if (call === undefined) throw new Error("fetch was not called");
+    const init2 = (call as unknown as [string, RequestInit])[1];
     const headers = init2.headers as Record<string, string>;
     expect(headers.authorization).toBe("Bearer sk-plain");
   });
@@ -61,8 +71,12 @@ describe("OpenAICompatibleProvider.complete", () => {
     const provider = new OpenAICompatibleProvider({
       baseUrl: "https://example.test/v1",
       apiKey: "sk",
-      fetch: async () =>
-        new Response(JSON.stringify({ error: { message: "nope" } }), { status: 429 }),
+      fetch: () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: { message: "nope" } }), {
+            status: 429,
+          }),
+        ),
     });
     await expect(provider.complete(request)).rejects.toMatchObject({
       type: "rate_limit",
@@ -74,7 +88,7 @@ describe("OpenAICompatibleProvider.complete", () => {
     const provider = new OpenAICompatibleProvider({
       baseUrl: "https://example.test/v1",
       apiKey: "sk",
-      fetch: async () => new Response("<html>", { status: 200 }),
+      fetch: () => Promise.resolve(new Response("<html>", { status: 200 })),
     });
     await expect(provider.complete(request)).rejects.toMatchObject({
       type: "decode",
@@ -85,7 +99,7 @@ describe("OpenAICompatibleProvider.complete", () => {
     const provider = new OpenAICompatibleProvider({
       baseUrl: "https://example.test/v1",
       apiKey: "sk",
-      fetch: async () => {
+      fetch: (): Promise<Response> => {
         throw new TypeError("connection refused");
       },
     });
@@ -98,7 +112,7 @@ describe("OpenAICompatibleProvider.complete", () => {
     const provider = new OpenAICompatibleProvider({
       baseUrl: "https://example.test/v1",
       apiKey: "sk",
-      fetch: async () => {
+      fetch: (): Promise<Response> => {
         throw new DOMException("aborted", "AbortError");
       },
     });
@@ -108,11 +122,13 @@ describe("OpenAICompatibleProvider.complete", () => {
   });
 
   it("propagates a plain AbortError", async () => {
-    const abortError = Object.assign(new Error("aborted"), { name: "AbortError" });
+    const abortError = Object.assign(new Error("aborted"), {
+      name: "AbortError",
+    });
     const provider = new OpenAICompatibleProvider({
       baseUrl: "https://example.test/v1",
       apiKey: "sk",
-      fetch: async () => {
+      fetch: (): Promise<Response> => {
         throw abortError;
       },
     });
@@ -123,7 +139,9 @@ describe("OpenAICompatibleProvider.complete", () => {
     const spy = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(
-        jsonResponse({ choices: [{ message: { content: "g" }, finish_reason: "stop" }] }),
+        jsonResponse({
+          choices: [{ message: { content: "g" }, finish_reason: "stop" }],
+        }),
       );
     const provider = new OpenAICompatibleProvider({
       baseUrl: "https://example.test/v1",
@@ -144,8 +162,13 @@ describe("OpenAICompatibleProvider.stream", () => {
     const provider = new OpenAICompatibleProvider({
       baseUrl: "https://example.test/v1",
       apiKey: "sk",
-      fetch: async () =>
-        new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } }),
+      fetch: () =>
+        Promise.resolve(
+          new Response(body, {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          }),
+        ),
     });
     const events = [];
     for await (const event of provider.stream(request)) events.push(event);
@@ -156,7 +179,7 @@ describe("OpenAICompatibleProvider.stream", () => {
     const provider = new OpenAICompatibleProvider({
       baseUrl: "https://example.test/v1",
       apiKey: "sk",
-      fetch: async () => new Response("boom", { status: 500 }),
+      fetch: () => Promise.resolve(new Response("boom", { status: 500 })),
     });
     await expect(async () => {
       for await (const _event of provider.stream(request)) void _event;
@@ -167,7 +190,7 @@ describe("OpenAICompatibleProvider.stream", () => {
     const provider = new OpenAICompatibleProvider({
       baseUrl: "https://example.test/v1",
       apiKey: "sk",
-      fetch: async () => new Response(null, { status: 200 }),
+      fetch: () => Promise.resolve(new Response(null, { status: 200 })),
     });
     await expect(async () => {
       for await (const _event of provider.stream(request)) void _event;

@@ -4,13 +4,27 @@ import type { ToolContext } from "../types";
 import { createCommandTool } from "./command";
 import { ToolInputError } from "./repository";
 
-const context: ToolContext = { root: process.cwd(), signal: new AbortController().signal };
+const context: ToolContext = {
+  root: process.cwd(),
+  signal: new AbortController().signal,
+};
 
 describe("createCommandTool", () => {
   it("runs a fixed command with injected executor and captures output", async () => {
-    const executor = vi.fn(async () => ({ stdout: "ok\n", stderr: "", exitCode: 0 }));
+    const executor = vi.fn(() =>
+      Promise.resolve({
+        stdout: "ok\n",
+        stderr: "",
+        exitCode: 0,
+      }),
+    );
     const tool = createCommandTool(
-      { name: "run_tests", description: "run", command: "vitest", args: ["run"] },
+      {
+        name: "run_tests",
+        description: "run",
+        command: "vitest",
+        args: ["run"],
+      },
       executor,
     );
     const result = await tool.execute("{}", context);
@@ -19,12 +33,26 @@ describe("createCommandTool", () => {
   });
 
   it("appends model arguments only when allowed", async () => {
-    const executor = vi.fn(async () => ({ stdout: "", stderr: "err", exitCode: 2 }));
+    const executor = vi.fn(() =>
+      Promise.resolve({
+        stdout: "",
+        stderr: "err",
+        exitCode: 2,
+      }),
+    );
     const tool = createCommandTool(
-      { name: "grep", description: "search", command: "rg", allowExtraArgs: true },
+      {
+        name: "grep",
+        description: "search",
+        command: "rg",
+        allowExtraArgs: true,
+      },
       executor,
     );
-    const result = await tool.execute(JSON.stringify({ args: ["needle"] }), context);
+    const result = await tool.execute(
+      JSON.stringify({ args: ["needle"] }),
+      context,
+    );
     expect(executor).toHaveBeenCalledWith("rg", ["needle"], expect.anything());
     expect(result).toBe("exit 2\nerr");
   });
@@ -32,7 +60,7 @@ describe("createCommandTool", () => {
   it("rejects arguments when the task disallows them", async () => {
     const tool = createCommandTool(
       { name: "build", description: "build", command: "tsc" },
-      async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+      () => Promise.resolve({ stdout: "", stderr: "", exitCode: 0 }),
     );
     await expect(
       tool.execute(JSON.stringify({ args: ["--watch"] }), context),
@@ -40,9 +68,20 @@ describe("createCommandTool", () => {
   });
 
   it("ignores an omitted args field and empty argument payloads", async () => {
-    const executor = vi.fn(async () => ({ stdout: "", stderr: "", exitCode: 0 }));
+    const executor = vi.fn(() =>
+      Promise.resolve({
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+      }),
+    );
     const tool = createCommandTool(
-      { name: "build", description: "build", command: "tsc", allowExtraArgs: true },
+      {
+        name: "build",
+        description: "build",
+        command: "tsc",
+        allowExtraArgs: true,
+      },
       executor,
     );
     await tool.execute("", context);
@@ -54,7 +93,7 @@ describe("createCommandTool", () => {
   it("validates the args payload shape", async () => {
     const tool = createCommandTool(
       { name: "grep", description: "s", command: "rg", allowExtraArgs: true },
-      async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+      () => Promise.resolve({ stdout: "", stderr: "", exitCode: 0 }),
     );
     await expect(tool.execute("{not json", context)).rejects.toThrow(
       /valid JSON/,
@@ -72,7 +111,7 @@ describe("createCommandTool", () => {
         command: "cat",
         maxOutputChars: 4,
       },
-      async () => ({ stdout: "abcdef…", stderr: "", exitCode: 0 }),
+      () => Promise.resolve({ stdout: "abcdef…", stderr: "", exitCode: 0 }),
     );
     expect(await tool.execute("{}", context)).toBe("exit 0\nabcd");
   });

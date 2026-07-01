@@ -14,17 +14,23 @@ async function runner(runnerId: string): Promise<RunnerIdentity> {
 const OPENROUTER_KEY = "sk-or-canary-integration-key";
 
 function fixtureFetch(capture: { authorization?: string; body?: string }) {
-  return async (input: string, init: RequestInit): Promise<Response> => {
-    capture.authorization = (init.headers as Record<string, string>).authorization;
+  return (input: string, init: RequestInit): Promise<Response> => {
+    capture.authorization = (
+      init.headers as Record<string, string>
+    ).authorization;
     capture.body = init.body as string;
     expect(input).toBe("https://openrouter.ai/api/v1/chat/completions");
-    return new Response(
-      JSON.stringify({
-        model: "anthropic/claude-3.5-sonnet",
-        choices: [{ message: { content: "The answer is 42." }, finish_reason: "stop" }],
-        usage: { prompt_tokens: 12, completion_tokens: 6, total_tokens: 18 },
-      }),
-      { status: 200, headers: { "content-type": "application/json" } },
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          model: "anthropic/claude-3.5-sonnet",
+          choices: [
+            { message: { content: "The answer is 42." }, finish_reason: "stop" },
+          ],
+          usage: { prompt_tokens: 12, completion_tokens: 6, total_tokens: 18 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
     );
   };
 }
@@ -43,7 +49,10 @@ describe("sealed credential drives a fixture-backed harness turn", () => {
     const apiKey = await resolver.resolve("openrouter");
 
     const capture: { authorization?: string; body?: string } = {};
-    const provider = new OpenRouterProvider({ apiKey, fetch: fixtureFetch(capture) });
+    const provider = new OpenRouterProvider({
+      apiKey,
+      fetch: fixtureFetch(capture),
+    });
 
     const harness = new LlmBenchHarness({
       provider,
