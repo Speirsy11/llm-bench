@@ -203,6 +203,15 @@ describe("runner HTTP protocol", () => {
       ["heartbeat"],
     );
     expect(invalidHeartbeat.status).toBe(400);
+    const malformedHeartbeat = await handle(
+      new Request("https://bench.example/api/v1/runner/heartbeat", {
+        method: "POST",
+        headers: authorized,
+        body: "{",
+      }),
+      ["heartbeat"],
+    );
+    expect(malformedHeartbeat.status).toBe(400);
 
     const revoked = await handle(
       new Request(
