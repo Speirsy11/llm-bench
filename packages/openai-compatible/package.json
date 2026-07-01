@@ -16,7 +16,6 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {},
   "devDependencies": {
     "@llm-bench/eslint-config": "workspace:*",
     "@llm-bench/prettier-config": "workspace:*",
