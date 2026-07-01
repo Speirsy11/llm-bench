@@ -13,7 +13,7 @@ const PAIRING_LIFETIME_MS = 10 * 60 * 1000;
 
 export interface RunnerPairingRecord {
   deviceCodeHash: string;
-  userCode: string;
+  userCodeHash: string;
   request: RunnerPairingStartRequest;
   expiresAt: Date;
   ownerId: string | null;
@@ -36,7 +36,9 @@ export interface PairedRunner {
 
 export interface RunnerProtocolStore {
   savePairing(record: RunnerPairingRecord): Promise<void>;
-  findPairingByUserCode(userCode: string): Promise<RunnerPairingRecord | null>;
+  findPairingByUserCodeHash(
+    userCodeHash: string,
+  ): Promise<RunnerPairingRecord | null>;
   findPairingByDeviceHash(
     deviceCodeHash: string,
   ): Promise<RunnerPairingRecord | null>;
@@ -67,9 +69,9 @@ export function createInMemoryRunnerProtocolStore(): InMemoryRunnerProtocolStore
       pairings.push(record);
       return Promise.resolve();
     },
-    findPairingByUserCode(userCode) {
+    findPairingByUserCodeHash(userCodeHash) {
       return Promise.resolve(
-        pairings.find((record) => record.userCode === userCode) ?? null,
+        pairings.find((record) => record.userCodeHash === userCodeHash) ?? null,
       );
     },
     findPairingByDeviceHash(deviceCodeHash) {
@@ -91,6 +93,7 @@ export function createInMemoryRunnerProtocolStore(): InMemoryRunnerProtocolStore
     revokeRunner(runnerId, revokedAt) {
       const runner = requiredInMemoryRunner(runners, runnerId);
       runner.revokedAt = revokedAt;
+      runner.status = "disabled";
       return Promise.resolve();
     },
     recordHeartbeat(runnerId, lastSeenAt) {
@@ -162,7 +165,7 @@ export function createRunnerProtocolService({
       const expiresAt = new Date(now().getTime() + PAIRING_LIFETIME_MS);
       await store.savePairing({
         deviceCodeHash: hashSecret(deviceCode),
-        userCode,
+        userCodeHash: hashSecret(userCode),
         request,
         expiresAt,
         ownerId: null,
@@ -173,7 +176,9 @@ export function createRunnerProtocolService({
     },
 
     async approvePairing(actor: AuthContext, userCode: string) {
-      const pairing = await store.findPairingByUserCode(userCode);
+      const pairing = await store.findPairingByUserCodeHash(
+        hashSecret(userCode),
+      );
       assertPairingUsable(pairing, now());
       if (pairing.ownerId !== null) {
         throw new Error("Pairing code has already been approved.");

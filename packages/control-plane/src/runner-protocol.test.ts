@@ -53,6 +53,7 @@ describe("runner pairing", () => {
       name: "fixture-runner",
     });
     expect(JSON.stringify(store.inspect())).not.toContain("runner-secret");
+    expect(JSON.stringify(store.inspect())).not.toContain("USER-CODE");
   });
 
   it("allows only one poller to consume an approved pairing", async () => {
@@ -199,7 +200,7 @@ describe("runner pairing", () => {
       store.approvePairing(
         {
           deviceCodeHash: "missing",
-          userCode: "missing",
+          userCodeHash: "missing",
           request: pairingInput,
           expiresAt: new Date("2999-01-01T00:00:00.000Z"),
           ownerId: "owner",

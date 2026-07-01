@@ -1,23 +1,32 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 export function RunnerPairingForm() {
   const [userCode, setUserCode] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
 
   return (
     <form
       onSubmit={(event) => {
         event.preventDefault();
+        if (submittingRef.current) return;
         setMessage(null);
+        submittingRef.current = true;
+        setSubmitting(true);
         void approveRunnerPairing(userCode)
           .then(setMessage)
           .catch((error: unknown) =>
             setMessage(
               error instanceof Error ? error.message : "Pairing failed.",
             ),
-          );
+          )
+          .finally(() => {
+            submittingRef.current = false;
+            setSubmitting(false);
+          });
       }}
     >
       <label htmlFor="runner-code">Runner pairing code</label>
@@ -26,10 +35,13 @@ export function RunnerPairingForm() {
         name="runner-code"
         autoComplete="one-time-code"
         required
+        disabled={submitting}
         value={userCode}
         onChange={(event) => setUserCode(event.target.value)}
       />
-      <button type="submit">Pair runner</button>
+      <button type="submit" disabled={submitting}>
+        Pair runner
+      </button>
       {message ? <p role="status">{message}</p> : null}
     </form>
   );

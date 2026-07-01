@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -110,5 +110,39 @@ describe("TracerExecutor", () => {
       status: "failed",
       error: { kind: "timed_out" },
     });
+  });
+
+  it("hardens pre-existing runner directories", async () => {
+    const root = await mkdtemp(join(tmpdir(), "llm-bench-tracer-"));
+    roots.push(root);
+    await Promise.all(
+      ["workspaces", "artifacts", "spools"].map(async (name) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        await chmod(path, 0o777);
+      }),
+    );
+
+    await new TracerExecutor(root).execute(
+      {
+        jobId: "70b70847-ec1c-4aeb-ac0f-bf7db0328efe",
+        attemptId: "d0da824f-6f6a-4a01-af27-f7448d22bb39",
+        leaseToken: "lease-token",
+        benchmark: { id: "repository-repair", version: "1.0.0" },
+        queuePosition: 0,
+        checkpoint: null,
+        cancellationRequested: false,
+      },
+      {
+        signal: new AbortController().signal,
+        checkpoint: null,
+        emit: () => Promise.resolve(),
+      },
+    );
+
+    const workspaceMode = (await stat(join(root, "workspaces"))).mode;
+    const spoolMode = (await stat(join(root, "spools"))).mode;
+    expect(workspaceMode & 0o777).toBe(0o700);
+    expect(spoolMode & 0o777).toBe(0o700);
   });
 });

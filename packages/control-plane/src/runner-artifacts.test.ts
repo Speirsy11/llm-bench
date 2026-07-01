@@ -21,6 +21,7 @@ describe("validateRunnerArtifactUpload", () => {
       },
       { contentHash: "not-a-hash" },
       { byteLength: -1 },
+      { byteLength: 10 * 1024 * 1024 + 1 },
     ]) {
       expect(() =>
         validateRunnerArtifactUpload({

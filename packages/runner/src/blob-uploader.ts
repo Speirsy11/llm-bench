@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { upload } from "@vercel/blob/client";
@@ -27,6 +28,10 @@ export class VercelBlobUploader implements RunnerArtifactUploader {
     const bytes = await this.dependencies.readFile(
       join(this.artifactRoot, artifact.contentHash),
     );
+    const actualHash = createHash("sha256").update(bytes).digest("hex");
+    if (actualHash !== artifact.contentHash) {
+      throw new Error("Artifact content hash mismatch.");
+    }
     await this.dependencies.upload(artifact.blobPath, bytes, {
       access: "private",
       handleUploadUrl: `${this.credentials.serverUrl.replace(/\/$/, "")}/api/v1/runner/artifacts/upload`,

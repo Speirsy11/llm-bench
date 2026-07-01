@@ -110,6 +110,9 @@ describe("runner job leasing", () => {
       }),
     ).rejects.toThrow("Checkpoint sequence must advance.");
     await service.requestCancellation("owner-1", job.id);
+    await expect(service.recordEvents(pairedRunner, batch)).rejects.toThrow(
+      "Attempt is already terminal.",
+    );
 
     expect(store.inspect()).toMatchObject({
       jobs: [{ status: "completed", cancellationRequested: false }],

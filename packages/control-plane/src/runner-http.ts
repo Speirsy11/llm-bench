@@ -1,7 +1,10 @@
+import { ZodError } from "zod";
+
 import {
   RUNNER_PROTOCOL_VERSION,
   RunnerCheckpointRequestSchema,
   RunnerEventBatchRequestSchema,
+  RunnerHeartbeatRequestSchema,
   RunnerLeaseRequestSchema,
   RunnerPairingStartRequestSchema,
   RunnerTerminalRequestSchema,
@@ -46,6 +49,7 @@ export function createRunnerHttpHandler({
 
       const runner = await authenticate(request, protocol);
       if (request.method === "POST" && path.join("/") === "heartbeat") {
+        RunnerHeartbeatRequestSchema.parse(await request.json());
         await protocol.heartbeat(runner);
         return json({
           protocolVersion: RUNNER_PROTOCOL_VERSION,
@@ -96,8 +100,13 @@ export function createRunnerHttpHandler({
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Invalid request.";
-      const status = message === "Runner authentication failed." ? 401 : 400;
-      return json({ error: message }, status);
+      if (message === "Runner authentication failed.") {
+        return json({ error: message }, 401);
+      }
+      if (isExpectedRunnerError(error)) {
+        return json({ error: message }, 400);
+      }
+      return json({ error: "Runner request failed." }, 500);
     }
   };
 }
@@ -111,4 +120,22 @@ async function authenticate(request: Request, protocol: ProtocolService) {
 
 function json(value: unknown, status = 200): Response {
   return Response.json(value, { status });
+}
+
+function isExpectedRunnerError(error: unknown): boolean {
+  if (error instanceof ZodError) return true;
+  if (!(error instanceof Error)) return false;
+  if (error instanceof SyntaxError) return true;
+  return [
+    "Attempt lease is required.",
+    "Attempt lease is unavailable.",
+    "Attempt is already terminal.",
+    "Checkpoint sequence must advance.",
+    "Job is unavailable.",
+    "Pairing code has already been approved.",
+    "Pairing code has already been consumed.",
+    "Pairing code has expired.",
+    "Pairing code is invalid.",
+    "Paired runner is unavailable.",
+  ].includes(error.message);
 }

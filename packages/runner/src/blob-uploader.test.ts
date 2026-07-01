@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import type { RunnerLease } from "@llm-bench/contracts";
@@ -17,6 +18,8 @@ const lease: RunnerLease = {
 describe("VercelBlobUploader", () => {
   it("uploads private artifacts directly with lease-scoped client payload", async () => {
     const uploads: { path: string; options: Record<string, unknown> }[] = [];
+    const bytes = Buffer.from("patch");
+    const contentHash = createHash("sha256").update(bytes).digest("hex");
     const uploader = new VercelBlobUploader(
       {
         serverUrl: "https://bench.example/",
@@ -27,7 +30,7 @@ describe("VercelBlobUploader", () => {
       },
       "/private/artifacts",
       {
-        readFile: (() => Promise.resolve(Buffer.from("patch"))) as never,
+        readFile: (() => Promise.resolve(bytes)) as never,
         upload: ((
           path: string,
           _bytes: unknown,
@@ -42,7 +45,7 @@ describe("VercelBlobUploader", () => {
     await uploader.upload(lease, {
       kind: "diff",
       blobPath: `attempts/${lease.attemptId}/diff.patch`,
-      contentHash: "abc",
+      contentHash,
       byteLength: 5,
     });
 
@@ -55,5 +58,31 @@ describe("VercelBlobUploader", () => {
       },
     });
     expect(uploads[0]?.options.clientPayload).toContain("runner-token");
+  });
+
+  it("refuses to upload bytes that do not match the artifact hash", async () => {
+    const uploader = new VercelBlobUploader(
+      {
+        serverUrl: "https://bench.example/",
+        runnerId: "runner-1",
+        token: "runner-token",
+        publicKey: "public-key",
+        privateKey: "private-key",
+      },
+      "/private/artifacts",
+      {
+        readFile: (() => Promise.resolve(Buffer.from("corrupt"))) as never,
+        upload: (() => Promise.resolve({})) as never,
+      },
+    );
+
+    await expect(
+      uploader.upload(lease, {
+        kind: "diff",
+        blobPath: `attempts/${lease.attemptId}/diff.patch`,
+        contentHash: "a".repeat(64),
+        byteLength: 7,
+      }),
+    ).rejects.toThrow("Artifact content hash mismatch.");
   });
 });

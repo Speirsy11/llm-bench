@@ -65,4 +65,50 @@ describe("RunnerPairingForm", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it("disables controls while a pairing approval is pending", async () => {
+    const originalFetch = globalThis.fetch;
+    let resolveFetch: ((response: Response) => void) | undefined;
+    let calls = 0;
+    globalThis.fetch = () => {
+      calls += 1;
+      return new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      });
+    };
+    try {
+      let renderer: ReturnType<typeof create> | undefined;
+      await act(() => {
+        renderer = create(<RunnerPairingForm />);
+      });
+      if (!renderer) throw new Error("Renderer was not created.");
+      const input = renderer.root.findByType("input");
+      const form = renderer.root.findByType("form");
+      const inputProps = input.props as {
+        onChange(event: { target: { value: string } }): void;
+      };
+      const formProps = form.props as {
+        onSubmit(event: { preventDefault(): void }): void;
+      };
+
+      await act(() => inputProps.onChange({ target: { value: "CODE" } }));
+      await act(() => {
+        formProps.onSubmit({ preventDefault: () => undefined });
+        formProps.onSubmit({ preventDefault: () => undefined });
+      });
+
+      expect(calls).toBe(1);
+      expect(renderer.root.findByType("input").props.disabled).toBe(true);
+      expect(renderer.root.findByType("button").props.disabled).toBe(true);
+
+      await act(async () => {
+        resolveFetch?.(Response.json({ runnerId: "runner-1" }));
+        await Promise.resolve();
+      });
+      expect(renderer.root.findByType("input").props.disabled).toBe(false);
+      renderer.unmount();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

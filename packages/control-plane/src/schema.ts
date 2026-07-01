@@ -140,7 +140,7 @@ export const runnerPairings = pgTable(
   "runner_pairings",
   {
     deviceCodeHash: text("device_code_hash").primaryKey(),
-    userCode: text("user_code").notNull(),
+    userCodeHash: text("user_code_hash").notNull(),
     request: jsonb().$type<Record<string, unknown>>().notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     ownerId: text("owner_id").references(() => users.id, {
@@ -155,7 +155,7 @@ export const runnerPairings = pgTable(
       .notNull(),
   },
   (table) => [
-    uniqueIndex("runner_pairings_user_code_unique").on(table.userCode),
+    uniqueIndex("runner_pairings_user_code_hash_unique").on(table.userCodeHash),
   ],
 );
 
@@ -269,6 +269,7 @@ export const attempts = pgTable(
   },
   (table) => [
     uniqueIndex("attempts_job_number_unique").on(table.jobId, table.number),
+    index("attempts_runner_status_index").on(table.runnerId, table.status),
   ],
 );
 

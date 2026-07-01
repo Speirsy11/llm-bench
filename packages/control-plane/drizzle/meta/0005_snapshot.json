@@ -299,6 +299,27 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "attempts_runner_status_index": {
+          "name": "attempts_runner_status_index",
+          "columns": [
+            {
+              "expression": "runner_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -853,8 +874,8 @@
           "primaryKey": true,
           "notNull": true
         },
-        "user_code": {
-          "name": "user_code",
+        "user_code_hash": {
+          "name": "user_code_hash",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -898,11 +919,11 @@
         }
       },
       "indexes": {
-        "runner_pairings_user_code_unique": {
-          "name": "runner_pairings_user_code_unique",
+        "runner_pairings_user_code_hash_unique": {
+          "name": "runner_pairings_user_code_hash_unique",
           "columns": [
             {
-              "expression": "user_code",
+              "expression": "user_code_hash",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

@@ -6,8 +6,10 @@ import type {
 
 import type { RunnerCredentials, RunnerStateStore } from "./state";
 
+export type RunnerCapability = "workspaces" | "files";
+
 export interface CapabilityProbe {
-  capabilities: ("workspaces" | "files")[];
+  capabilities: RunnerCapability[];
   environment: RunnerEnvironment;
   issues: string[];
 }
@@ -22,7 +24,7 @@ interface CliOptions {
       serverUrl: string;
       name: string;
       publicKey: string;
-      capabilities: ("workspaces" | "files")[];
+      capabilities: RunnerCapability[];
       environment: RunnerEnvironment;
     }): Promise<RunnerPairingStartResponse>;
     poll(

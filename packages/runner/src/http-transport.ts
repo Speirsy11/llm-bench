@@ -1,3 +1,5 @@
+import type { infer as zInfer, ZodType } from "zod";
+
 import type {
   RunnerCheckpoint,
   RunnerEnvironment,
@@ -19,6 +21,7 @@ import type { BufferedEvent } from "./event-buffer";
 import type { RunnerTransport } from "./worker";
 
 type Fetch = (request: Request) => Promise<Response>;
+const DEFAULT_HTTP_TIMEOUT_MS = 30_000;
 
 export class RunnerHttpTransport implements RunnerTransport {
   private readonly serverUrl: string;
@@ -115,6 +118,7 @@ export class RunnerHttpTransport implements RunnerTransport {
     const response = await this.fetch(
       new Request(`${this.serverUrl}/api/v1/runner/${path}`, {
         method: options.method,
+        signal: AbortSignal.timeout(DEFAULT_HTTP_TIMEOUT_MS),
         headers: {
           authorization: `Bearer ${this.token}`,
           "content-type": "application/json",
@@ -123,14 +127,7 @@ export class RunnerHttpTransport implements RunnerTransport {
           options.body === undefined ? undefined : JSON.stringify(options.body),
       }),
     );
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => null)) as {
-        error?: string;
-      } | null;
-      throw new Error(
-        payload?.error ?? `Runner API failed (${response.status}).`,
-      );
-    }
+    await assertOk(response, "Runner API failed");
     return response;
   }
 }
@@ -146,9 +143,11 @@ export async function startRunnerPairing(
   fetch: Fetch = globalThis.fetch,
 ): Promise<RunnerPairingStartResponse> {
   const serverUrl = options.serverUrl.replace(/\/$/, "");
-  const response = await fetch(
+  return requestJson(
+    fetch,
     new Request(`${serverUrl}/api/v1/runner/pairings`, {
       method: "POST",
+      signal: AbortSignal.timeout(DEFAULT_HTTP_TIMEOUT_MS),
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         protocolVersion: RUNNER_PROTOCOL_VERSION,
@@ -158,9 +157,9 @@ export async function startRunnerPairing(
         environment: options.environment,
       }),
     }),
+    "Pairing failed",
+    RunnerPairingStartResponseSchema,
   );
-  if (!response.ok) throw new Error(`Pairing failed (${response.status}).`);
-  return RunnerPairingStartResponseSchema.parse(await response.json());
 }
 
 export async function pollRunnerPairing(
@@ -168,12 +167,32 @@ export async function pollRunnerPairing(
   deviceCode: string,
   fetch: Fetch = globalThis.fetch,
 ): Promise<RunnerPairingPollResponse> {
-  const response = await fetch(
+  return requestJson(
+    fetch,
     new Request(
       `${serverUrl.replace(/\/$/, "")}/api/v1/runner/pairings/${encodeURIComponent(deviceCode)}`,
+      { signal: AbortSignal.timeout(DEFAULT_HTTP_TIMEOUT_MS) },
     ),
+    "Pairing poll failed",
+    RunnerPairingPollResponseSchema,
   );
-  if (!response.ok)
-    throw new Error(`Pairing poll failed (${response.status}).`);
-  return RunnerPairingPollResponseSchema.parse(await response.json());
+}
+
+async function requestJson<T extends ZodType>(
+  fetch: Fetch,
+  request: Request,
+  label: string,
+  schema: T,
+): Promise<zInfer<T>> {
+  const response = await fetch(request);
+  await assertOk(response, label);
+  return schema.parse(await response.json());
+}
+
+async function assertOk(response: Response, label: string): Promise<void> {
+  if (response.ok) return;
+  const payload = (await response.json().catch(() => null)) as {
+    error?: string;
+  } | null;
+  throw new Error(payload?.error ?? `${label} (${response.status}).`);
 }

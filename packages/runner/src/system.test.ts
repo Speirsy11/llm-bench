@@ -23,7 +23,7 @@ describe("probeRunnerSystem", () => {
 
     expect(probe.issues).toEqual([
       "Unsupported operating system: win32.",
-      "Node 22 is required; detected 21.0.0.",
+      "Node 22 or newer is required; detected 21.0.0.",
     ]);
     expect(probe.environment).toMatchObject({
       os: "linux",
@@ -32,11 +32,20 @@ describe("probeRunnerSystem", () => {
     });
   });
 
-  it("accepts the supported Node 22 macOS combination", () => {
+  it("accepts supported Node 22+ macOS combinations", () => {
     expect(
       probeRunnerSystem({
         platform: () => "darwin",
         nodeVersion: "22.21.0",
+        architecture: () => "arm64",
+        cpuModels: () => ["Apple M4"],
+        totalMemory: () => 8 * 1024 * 1024 * 1024,
+      }),
+    ).toMatchObject({ issues: [], environment: { os: "darwin" } });
+    expect(
+      probeRunnerSystem({
+        platform: () => "darwin",
+        nodeVersion: "24.0.0",
         architecture: () => "arm64",
         cpuModels: () => ["Apple M4"],
         totalMemory: () => 8 * 1024 * 1024 * 1024,
@@ -53,6 +62,6 @@ describe("probeRunnerSystem", () => {
         cpuModels: () => ["cpu"],
         totalMemory: () => 1024,
       }).issues,
-    ).toEqual(["Node 22 is required; detected ."]);
+    ).toEqual(["Node 22 or newer is required; detected ."]);
   });
 });

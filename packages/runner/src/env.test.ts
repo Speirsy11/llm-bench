@@ -12,4 +12,8 @@ describe("runnerHome", () => {
   it("falls back to a hidden directory under the user home", () => {
     expect(runnerHome({})).toMatch(/\.llm-bench$/);
   });
+
+  it("falls back when the override is blank", () => {
+    expect(runnerHome({ LLMBENCH_RUNNER_HOME: "" })).toMatch(/\.llm-bench$/);
+  });
 });

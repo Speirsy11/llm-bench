@@ -5,5 +5,7 @@ import { env } from "node:process";
 export function runnerHome(
   environment: Readonly<Record<string, string | undefined>> = env,
 ): string {
-  return environment.LLMBENCH_RUNNER_HOME ?? join(homedir(), ".llm-bench");
+  const configured = environment.LLMBENCH_RUNNER_HOME?.trim();
+  if (configured) return configured;
+  return join(homedir(), ".llm-bench");
 }

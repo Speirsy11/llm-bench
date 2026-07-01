@@ -189,6 +189,21 @@ describe("RunnerHttpTransport", () => {
       ),
     ).rejects.toThrow("Pairing failed (500).");
     await expect(
+      startRunnerPairing(
+        {
+          serverUrl: "https://bench.example",
+          name: "runner",
+          publicKey: "key",
+          capabilities: ["workspaces", "files"],
+          environment,
+        },
+        () =>
+          Promise.resolve(
+            Response.json({ error: "Pairing disabled." }, { status: 403 }),
+          ),
+      ),
+    ).rejects.toThrow("Pairing disabled.");
+    await expect(
       pollRunnerPairing("https://bench.example", "device", () =>
         Promise.resolve(new Response(null, { status: 500 })),
       ),

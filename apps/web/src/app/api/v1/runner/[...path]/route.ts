@@ -71,7 +71,7 @@ async function dispatch(
     } catch (error) {
       return Response.json(
         { error: error instanceof Error ? error.message : "Upload failed." },
-        { status: 400 },
+        { status: statusForRunnerUploadError(error) },
       );
     }
   }
@@ -83,14 +83,14 @@ async function dispatch(
         { status: 401 },
       );
     }
-    const body = (await request.json()) as { userCode?: unknown };
-    if (typeof body.userCode !== "string" || body.userCode.length === 0) {
-      return Response.json(
-        { error: "Pairing code is required." },
-        { status: 400 },
-      );
-    }
     try {
+      const body = (await request.json()) as { userCode?: unknown };
+      if (typeof body.userCode !== "string" || body.userCode.length === 0) {
+        return Response.json(
+          { error: "Pairing code is required." },
+          { status: 400 },
+        );
+      }
       const result = await runnerProtocol.approvePairing(
         {
           userId: session.user.id,
@@ -108,4 +108,21 @@ async function dispatch(
     }
   }
   return handleRunnerRequest(request, path);
+}
+
+function statusForRunnerUploadError(error: unknown): number {
+  if (!(error instanceof Error)) return 500;
+  if (
+    error.message === "Artifact upload is invalid." ||
+    error instanceof SyntaxError
+  ) {
+    return 400;
+  }
+  if (
+    error.message === "Runner authentication failed." ||
+    error.message === "Attempt lease is unavailable."
+  ) {
+    return 401;
+  }
+  return 500;
 }

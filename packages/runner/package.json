@@ -36,5 +36,8 @@
     "typescript": "catalog:",
     "vitest": "catalog:"
   },
+  "dependencies": {
+    "zod": "catalog:"
+  },
   "prettier": "@llm-bench/prettier-config"
 }

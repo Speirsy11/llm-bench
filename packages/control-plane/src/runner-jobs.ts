@@ -226,7 +226,7 @@ export function createRunnerJobService({
         attemptId: claimed.attempt.id,
         leaseToken,
         benchmark: claimed.job.benchmark,
-        queuePosition: 0,
+        queuePosition: claimed.job.position,
         checkpoint: claimed.attempt.checkpoint,
         cancellationRequested: claimed.job.cancellationRequested,
       };
@@ -237,6 +237,9 @@ export function createRunnerJobService({
       request: RunnerEventBatchRequest,
     ): Promise<{ throughSequence: number }> {
       const attempt = await authorizeAttempt(store, runner, request);
+      if (isTerminal(attempt.status)) {
+        throw new Error("Attempt is already terminal.");
+      }
       for (const item of request.events) {
         await store.saveEvent({ attemptId: attempt.id, ...item });
       }

@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { chmod, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { RunnerCheckpoint, RunnerLease } from "@llm-bench/contracts";
@@ -41,6 +41,11 @@ export class TracerExecutor implements RunnerExecutor {
     await Promise.all(
       [workspaceRoot, artifactRoot, spoolRoot].map((path) =>
         mkdir(path, { recursive: true, mode: 0o700 }),
+      ),
+    );
+    await Promise.all(
+      [workspaceRoot, artifactRoot, spoolRoot].map((path) =>
+        chmod(path, 0o700),
       ),
     );
     const artifactStore = new FileArtifactStore(artifactRoot);

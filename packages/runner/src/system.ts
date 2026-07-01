@@ -26,8 +26,9 @@ export function probeRunnerSystem(
   if (os !== "darwin" && os !== "linux") {
     issues.push(`Unsupported operating system: ${os}.`);
   }
-  if (Number.parseInt(nodeVersion, 10) !== 22) {
-    issues.push(`Node 22 is required; detected ${nodeVersion}.`);
+  const nodeMajor = Number.parseInt(nodeVersion, 10);
+  if (!Number.isFinite(nodeMajor) || nodeMajor < 22) {
+    issues.push(`Node 22 or newer is required; detected ${nodeVersion}.`);
   }
   return {
     capabilities: ["workspaces", "files"],

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -211,7 +211,7 @@ describe("durable runner protocol", () => {
     await protocol.heartbeat(staleHeartbeat);
     const revokedRunner = await protocolStore.findRunnerById(winner.id);
     expect(revokedRunner?.revokedAt).toBeInstanceOf(Date);
-    expect(revokedRunner?.status).toBe("offline");
+    expect(revokedRunner?.status).toBe("disabled");
 
     await expect(jobStore.findAttempt(randomUUID())).resolves.toBeNull();
     await expect(jobStore.findJob(randomUUID())).resolves.toBeNull();
@@ -222,22 +222,21 @@ describe("durable runner protocol", () => {
       protocolStore.findRunnerByTokenHash("missing"),
     ).resolves.toBeNull();
     await expect(
-      protocolStore.findPairingByUserCode("missing"),
+      protocolStore.findPairingByUserCodeHash("missing"),
     ).resolves.toBeNull();
     await expect(
       protocolStore.findPairingByDeviceHash("missing"),
     ).resolves.toBeNull();
 
-    const consumedPairing = await protocolStore.findPairingByUserCode(
-      (
-        await protocol.startPairing({
-          protocolVersion: "1.0",
-          name: "race-runner",
-          publicKey: "race-key",
-          capabilities: ["workspaces", "files"],
-          environment: first.environment,
-        })
-      ).userCode,
+    const pairingForRace = await protocol.startPairing({
+      protocolVersion: "1.0",
+      name: "race-runner",
+      publicKey: "race-key",
+      capabilities: ["workspaces", "files"],
+      environment: first.environment,
+    });
+    const consumedPairing = await protocolStore.findPairingByUserCodeHash(
+      hashSecret(pairingForRace.userCode),
     );
     if (!consumedPairing) throw new Error("Expected pairing.");
     const raceRunner = { ...first, id: randomUUID(), tokenHash: "" };
@@ -273,3 +272,7 @@ describe("durable runner protocol", () => {
     );
   });
 });
+
+function hashSecret(secret: string): string {
+  return createHash("sha256").update(secret).digest("hex");
+}

@@ -114,7 +114,7 @@ describe("runner HTTP protocol", () => {
       new Request("https://bench.example/api/v1/runner/heartbeat", {
         method: "POST",
         headers: authorized,
-        body: "{}",
+        body: JSON.stringify({ protocolVersion: "1.0", status: "online" }),
       }),
       ["heartbeat"],
     );
@@ -194,6 +194,16 @@ describe("runner HTTP protocol", () => {
         )
       ).status,
     ).toBe(401);
+    const invalidHeartbeat = await handle(
+      new Request("https://bench.example/api/v1/runner/heartbeat", {
+        method: "POST",
+        headers: authorized,
+        body: "{}",
+      }),
+      ["heartbeat"],
+    );
+    expect(invalidHeartbeat.status).toBe(400);
+
     const revoked = await handle(
       new Request(
         `https://bench.example/api/v1/runner/runners/${approved.token}/revoke`,
@@ -234,6 +244,25 @@ describe("runner HTTP protocol", () => {
       json: () => Promise.reject("not-an-error"),
     } as unknown as Request;
     const invalid = await handle(brokenRequest, ["pairings"]);
-    expect(await invalid.json()).toEqual({ error: "Invalid request." });
+    expect(await invalid.json()).toEqual({ error: "Runner request failed." });
+
+    const failingHandle = createRunnerHttpHandler({
+      protocol: {
+        ...protocol,
+        authenticate: () => Promise.reject(new Error("database unavailable")),
+      },
+      jobs,
+      baseUrl: "https://bench.example",
+    });
+    const failed = await failingHandle(
+      new Request("https://bench.example/api/v1/runner/lease", {
+        method: "POST",
+        headers: authorized,
+        body: JSON.stringify({ protocolVersion: "1.0" }),
+      }),
+      ["lease"],
+    );
+    expect(failed.status).toBe(500);
+    expect(await failed.json()).toEqual({ error: "Runner request failed." });
   });
 });

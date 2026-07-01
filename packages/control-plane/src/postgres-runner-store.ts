@@ -37,7 +37,7 @@ export class PostgresRunnerProtocolStore implements RunnerProtocolStore {
   async savePairing(record: RunnerPairingRecord): Promise<void> {
     const values = {
       deviceCodeHash: record.deviceCodeHash,
-      userCode: record.userCode,
+      userCodeHash: record.userCodeHash,
       request: record.request,
       expiresAt: record.expiresAt,
       ownerId: record.ownerId,
@@ -47,11 +47,11 @@ export class PostgresRunnerProtocolStore implements RunnerProtocolStore {
     await this.db.insert(runnerPairings).values(values);
   }
 
-  async findPairingByUserCode(
-    userCode: string,
+  async findPairingByUserCodeHash(
+    userCodeHash: string,
   ): Promise<RunnerPairingRecord | null> {
     const row = await this.db.query.runnerPairings.findFirst({
-      where: eq(runnerPairings.userCode, userCode),
+      where: eq(runnerPairings.userCodeHash, userCodeHash),
     });
     return row ? pairingFromRow(row) : null;
   }
@@ -82,7 +82,7 @@ export class PostgresRunnerProtocolStore implements RunnerProtocolStore {
   async revokeRunner(runnerId: string, revokedAt: Date): Promise<void> {
     await this.db
       .update(runners)
-      .set({ revokedAt })
+      .set({ revokedAt, status: "disabled" })
       .where(eq(runners.id, runnerId));
   }
 
@@ -179,6 +179,12 @@ export class PostgresRunnerJobStore implements RunnerJobStore {
     leaseTokenHash,
   }: Parameters<RunnerJobStore["claimNext"]>[0]) {
     return this.db.transaction(async (transaction) => {
+      await transaction
+        .select({ id: runners.id })
+        .from(runners)
+        .where(eq(runners.id, runner.id))
+        .for("update");
+
       const active = await transaction
         .select({ id: attempts.id })
         .from(attempts)
@@ -205,6 +211,8 @@ export class PostgresRunnerJobStore implements RunnerJobStore {
           and(
             eq(jobs.status, "queued"),
             eq(experiments.ownerId, runner.ownerId),
+            sql`${jobs.benchmarkId} is not null`,
+            sql`${jobs.benchmarkVersion} is not null`,
             sql`${jobs.requiredCapabilities} <@ ${JSON.stringify(runner.capabilities)}::jsonb`,
           ),
         )
@@ -377,7 +385,7 @@ function pairingFromRow(
 ): RunnerPairingRecord {
   return {
     deviceCodeHash: row.deviceCodeHash,
-    userCode: row.userCode,
+    userCodeHash: row.userCodeHash,
     request: row.request as unknown as RunnerPairingStartRequest,
     expiresAt: row.expiresAt,
     ownerId: row.ownerId,
