@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -133,10 +133,13 @@ setInterval(() => {}, 1_000);
     const root = await mkdtemp(join(tmpdir(), "node-process-runner-"));
     roots.push(root);
     const executable = join(root, "fixture.mjs");
+    const ready = join(root, "ready");
     await writeFile(
       executable,
       `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
 process.on("SIGTERM", () => {});
+writeFileSync(${JSON.stringify(ready)}, "ready");
 setTimeout(() => process.exit(0), 1_500);
 `,
     );
@@ -150,7 +153,8 @@ setTimeout(() => process.exit(0), 1_500);
       signal: controller.signal,
       maxOutputBytes: 1_024,
     });
-    setTimeout(() => controller.abort(), 100);
+    await waitForFile(ready);
+    controller.abort();
 
     await expect(running).resolves.toMatchObject({
       cancelled: true,
@@ -206,3 +210,16 @@ setTimeout(() => process.exit(0), 1_500);
     expect(directKill).not.toHaveBeenCalled();
   });
 });
+
+async function waitForFile(path: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    try {
+      await access(path);
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+  throw new Error(`Fixture did not become ready: ${path}`);
+}
