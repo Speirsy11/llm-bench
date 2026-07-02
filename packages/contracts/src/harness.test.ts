@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import type { BenchmarkEvent, Checkpoint } from "./events";
-import type { CompletionResult } from "./harness";
+import type { Checkpoint } from "./events";
+import type {
+  AdapterRunRequest,
+  AdapterRunResult,
+  CompletionResult,
+} from "./harness";
 import type { BenchmarkManifest, HarnessManifest } from "./manifest";
 import type { ResponseCase } from "./workload";
 import { ResponseBenchmark } from "./benchmark";
@@ -35,19 +39,30 @@ class JsonBenchmark extends ResponseBenchmark {
 }
 
 class StubHarness extends HarnessAdapter {
-  override async *run(): AsyncIterable<BenchmarkEvent> {
-    // Contract-level stub: emits no events.
+  override run(_request: AdapterRunRequest): Promise<AdapterRunResult> {
+    return Promise.resolve(emptyRunResult());
   }
 }
 
 class StubProcessHarness extends ProcessHarnessAdapter {
-  override async *run(): AsyncIterable<BenchmarkEvent> {
-    // Contract-level stub: emits no events.
+  override run(_request: AdapterRunRequest): Promise<AdapterRunResult> {
+    return Promise.resolve(emptyRunResult());
   }
 
   override command(): string[] {
     return [];
   }
+}
+
+function emptyRunResult(): AdapterRunResult {
+  return {
+    status: "completed",
+    output: "",
+    observations: [],
+    checkpoint: null,
+    events: [],
+    metadata: {},
+  };
 }
 
 class StubProvider extends OpenAICompatibleModelProvider {
