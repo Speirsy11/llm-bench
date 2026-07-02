@@ -1,13 +1,13 @@
 ---
 id: EPIC-06
 title: Sealed credentials and LLMBench harness
-status: in_review
+status: complete
 depends_on:
   - EPIC-05
 owner: Claude
 branch: codex/epic-06-sealed-credentials-harness
 pull_request: https://github.com/Speirsy11/llm-bench/pull/6
-last_updated: 2026-07-01
+last_updated: 2026-07-02
 ---
 
 # EPIC-06 — Sealed credentials and LLMBench harness
@@ -34,25 +34,25 @@ Allow a dashboard-entered OpenRouter key to be sealed for one runner and used lo
 
 ## TDD tracer and incremental behaviors
 
-- [ ] RED: ciphertext created for runner A cannot yet drive an OpenRouter fixture call on runner A.
-- [ ] GREEN: runner A decrypts in memory and completes a fixture-backed harness turn.
-- [ ] Add wrong-runner denial, tamper detection, streaming, tool loop, limits, provider errors, cancellation, and secret redaction one behavior at a time.
+- [x] RED: ciphertext created for runner A cannot yet drive an OpenRouter fixture call on runner A.
+- [x] GREEN: runner A decrypts in memory and completes a fixture-backed harness turn.
+- [x] Add wrong-runner denial, tamper detection, streaming, tool loop, limits, provider errors, cancellation, and secret redaction one behavior at a time.
 
 ## Implementation checklist
 
-- [ ] Use a reviewed cryptographic library; do not design custom primitives.
-- [ ] Keep plaintext out of database, job payloads, benchmark objects, diagnostics, and artifacts.
-- [ ] Pass credentials only to the provider boundary that declares the requirement.
-- [ ] Add path-contained read/list/search/patch and task-defined command tools.
-- [ ] Record missing provider metadata explicitly rather than as zero.
+- [x] Use a reviewed cryptographic library; do not design custom primitives.
+- [x] Keep plaintext out of database, job payloads, benchmark objects, diagnostics, and artifacts.
+- [x] Pass credentials only to the provider boundary that declares the requirement.
+- [x] Add path-contained read/list/search/patch and task-defined command tools.
+- [x] Record missing provider metadata explicitly rather than as zero.
 
 ## Acceptance criteria
 
-- [ ] Only the selected runner decrypts a credential.
-- [ ] Modified ciphertext fails closed.
-- [ ] Secret canaries do not appear in any serialized result or log.
-- [ ] Agent loop stops on completion, cancellation, timeout, or configured limits.
-- [ ] OpenRouter transport behavior is covered without paid calls.
+- [x] Only the selected runner decrypts a credential.
+- [x] Modified ciphertext fails closed.
+- [x] Secret canaries do not appear in any serialized result or log.
+- [x] Agent loop stops on completion, cancellation, timeout, or configured limits.
+- [x] OpenRouter transport behavior is covered without paid calls.
 
 ## Required verification commands
 
@@ -67,11 +67,12 @@ Allow a dashboard-entered OpenRouter key to be sealed for one runner and used lo
 
 | Date | Agent | Commit | Commands and outcome | Notes |
 | ---- | ----- | ------ | -------------------- | ----- |
+| 2026-07-02 | Codex | `ee9af85` | `pnpm format`, `pnpm lint`, `pnpm lint:ws`, `pnpm typecheck`, `pnpm boundaries`, `pnpm test:coverage`, `pnpm test:integration`, `pnpm test`, `pnpm build` — pass | CI-equivalent environment with Postgres; package coverage gates are 100%. |
 
 ## Decisions or blockers
 
-None.
+CodeQL's polynomial-regex finding was fixed with linear trailing-slash normalization and a slash-heavy regression test. The prior harness coverage failure was fixed by removing an unreachable array-lookup branch.
 
 ## Handoff notes
 
-EPIC-07 exposes these capabilities in the dashboard. EPIC-11 extends toolsets without widening credential access.
+EPIC-07 can expose the completed credential and harness capabilities in the dashboard. EPIC-11 can extend toolsets without widening credential access.
