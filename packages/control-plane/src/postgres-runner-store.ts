@@ -144,9 +144,7 @@ export class PostgresRunnerProtocolStore implements RunnerProtocolStore {
           ),
         )
         .returning({ deviceCodeHash: runnerPairings.deviceCodeHash });
-      if (consumed.length === 0) {
-        return false;
-      }
+      if (consumed.length === 0) return false;
       await transaction
         .update(runners)
         .set({ tokenHash: runner.tokenHash })
