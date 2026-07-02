@@ -138,10 +138,8 @@ function searchFilesTool(config: ResolvedConfig): AgentTool {
         context,
         (rel, content) => {
           const lines = content.split("\n");
-          for (let i = 0; i < lines.length; i++) {
+          for (const [i, line] of lines.entries()) {
             if (matches.length >= config.maxSearchResults) return;
-            const line = lines[i];
-            if (line === undefined) continue;
             if (line.includes(query))
               matches.push(`${rel}:${i + 1}: ${line.trim()}`);
           }

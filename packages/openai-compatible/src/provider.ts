@@ -35,7 +35,7 @@ export class OpenAICompatibleProvider {
   readonly #defaultHeaders: Record<string, string>;
 
   constructor(config: ProviderConfig) {
-    this.#baseUrl = config.baseUrl.replace(/\/+$/, "");
+    this.#baseUrl = trimTrailingSlashes(config.baseUrl);
     this.#apiKey = config.apiKey;
     this.#fetch = config.fetch ?? ((input, init) => fetch(input, init));
     this.#defaultHeaders = config.defaultHeaders ?? {};
@@ -116,6 +116,12 @@ export class OpenAICompatibleProvider {
       );
     }
   }
+}
+
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end--;
+  return value.slice(0, end);
 }
 
 function resolveApiKey(apiKey: ApiKey): string {

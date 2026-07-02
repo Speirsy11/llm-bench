@@ -46,6 +46,31 @@ describe("OpenAICompatibleProvider.complete", () => {
     expect(init.body).not.toContain("canary");
   });
 
+  it("normalizes slash-heavy provider URLs without pathological backtracking", async () => {
+    const slashHeavyBaseUrl = `https://example.test/${"/".repeat(50_000)}v1`;
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        jsonResponse({
+          choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+        }),
+      ),
+    );
+
+    const startedAt = performance.now();
+    const provider = new OpenAICompatibleProvider({
+      baseUrl: slashHeavyBaseUrl,
+      apiKey: "sk",
+      fetch: fetchMock,
+    });
+    await provider.complete(request);
+
+    expect(performance.now() - startedAt).toBeLessThan(250);
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${slashHeavyBaseUrl}/chat/completions`,
+      expect.any(Object),
+    );
+  });
+
   it("accepts a plain string api key", async () => {
     const fetchMock = vi.fn(() =>
       Promise.resolve(
