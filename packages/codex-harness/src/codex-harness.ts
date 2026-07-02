@@ -211,7 +211,7 @@ function describeFailure(
   event: Extract<CodexEvent, { type: "error" | "turn.failed" }>,
 ): string {
   if (event.type === "error") return event.message;
-  return typeof event.error === "string"
-    ? event.error
-    : "Codex reported a failed turn.";
+  if (typeof event.error === "string") return event.error;
+  if (event.error === undefined) return "Codex reported a failed turn.";
+  return `Codex reported a failed turn: ${JSON.stringify(event.error)}`;
 }

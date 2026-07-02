@@ -188,6 +188,10 @@ setTimeout(() => process.exit(0), 1_500);
     ).rejects.toSatisfy((error: unknown) => {
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).toContain("missing-[REDACTED]");
+      const cause = (error as Error & { cause?: unknown }).cause;
+      expect(cause).toBeInstanceOf(Error);
+      expect((cause as Error).message).toContain("missing-[REDACTED]");
+      expect((cause as Error).message).not.toContain("api-secret");
       return true;
     });
   });

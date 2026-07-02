@@ -354,8 +354,9 @@ process.exit(10);
     [{ type: "turn.failed", error: "model unavailable" }, "model unavailable"],
     [
       { type: "turn.failed", error: { code: "upstream" } },
-      "Codex reported a failed turn.",
+      'Codex reported a failed turn: {"code":"upstream"}',
     ],
+    [{ type: "turn.failed" }, "Codex reported a failed turn."],
   ])("normalizes a failed Codex event %#", async (event, expected) => {
     const runner: ProcessRunner = {
       run: () =>

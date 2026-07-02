@@ -68,7 +68,9 @@ export class NodeProcessRunner implements ProcessRunner {
       child.on("error", (error) => {
         if (!settled) {
           settled = true;
-          reject(new Error(redact(error.message), { cause: error }));
+          const sanitizedCause = new Error(redact(error.message));
+          sanitizedCause.name = error.name;
+          reject(new Error(redact(error.message), { cause: sanitizedCause }));
         }
       });
       child.on("close", (exitCode, signal) => {
