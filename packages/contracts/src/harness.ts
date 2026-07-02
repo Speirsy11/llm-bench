@@ -1,6 +1,6 @@
 import type { Benchmark } from "./benchmark";
 import type { Capability, CompatibilityResult } from "./capability";
-import type { BenchmarkEvent, Checkpoint } from "./events";
+import type { Checkpoint } from "./events";
 import type { HarnessManifest, Limits, Toolset } from "./manifest";
 import type { MetricObservation } from "./metric";
 import { evaluateCompatibility } from "./capability";
@@ -18,10 +18,27 @@ export interface BenchmarkRunTarget {
 }
 
 export interface AdapterRunRequest {
+  mode: "response" | "agentic";
+  jobId: string;
+  caseId: string;
+  prompt: string;
+  workspaceRoot: string;
   benchmark: BenchmarkRunTarget;
   modelRouteId: string;
   toolset: Toolset;
   limits: Limits;
+  checkpoint: Checkpoint | null;
+  signal?: AbortSignal;
+}
+
+export interface AdapterRunResult {
+  status: "completed" | "failed" | "cancelled";
+  output: string;
+  observations: MetricObservation[];
+  checkpoint: Checkpoint | null;
+  events: unknown[];
+  metadata: Record<string, unknown>;
+  error?: string;
 }
 
 export abstract class HarnessAdapter {
@@ -40,7 +57,7 @@ export abstract class HarnessAdapter {
     );
   }
 
-  abstract run(request: AdapterRunRequest): AsyncIterable<BenchmarkEvent>;
+  abstract run(request: AdapterRunRequest): Promise<AdapterRunResult>;
 }
 
 export abstract class ProcessHarnessAdapter extends HarnessAdapter {

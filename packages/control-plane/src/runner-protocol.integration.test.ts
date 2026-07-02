@@ -240,8 +240,13 @@ describe("durable runner protocol", () => {
     );
     if (!consumedPairing) throw new Error("Expected pairing.");
     const raceRunner = { ...first, id: randomUUID(), tokenHash: "" };
+    const claimedPairing = {
+      ...consumedPairing,
+      ownerId,
+      runnerId: raceRunner.id,
+    };
     const claimed = await protocolStore.approvePairing(
-      { ...consumedPairing, ownerId, runnerId: raceRunner.id },
+      claimedPairing,
       raceRunner,
     );
     expect(claimed).toBe(true);
@@ -250,6 +255,13 @@ describe("durable runner protocol", () => {
         { ...consumedPairing, ownerId, runnerId: randomUUID() },
         { ...raceRunner, id: randomUUID() },
       ),
+    ).resolves.toBe(false);
+    const consumedAt = new Date();
+    await expect(
+      protocolStore.consumePairing(claimedPairing, raceRunner, consumedAt),
+    ).resolves.toBe(true);
+    await expect(
+      protocolStore.consumePairing(claimedPairing, raceRunner, consumedAt),
     ).resolves.toBe(false);
 
     const malformedJobId = randomUUID();
