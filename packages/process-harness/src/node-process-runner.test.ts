@@ -77,19 +77,28 @@ setInterval(() => {}, 1_000);
     const root = await mkdtemp(join(tmpdir(), "node-process-runner-"));
     roots.push(root);
     const executable = join(root, "fixture.mjs");
+    const grandchild = join(root, "grandchild.mjs");
     const marker = join(root, "grandchild-finished");
+    await writeFile(
+      grandchild,
+      `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+
+setTimeout(() => writeFileSync(process.argv[2], "bad"), 350);
+`,
+    );
     await writeFile(
       executable,
       `#!/usr/bin/env node
 import { spawn } from "node:child_process";
-spawn(process.execPath, ["-e", ${JSON.stringify(`setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(marker)}, "bad"), 350)`)}], { stdio: "ignore" });
+spawn(process.execPath, [process.argv[2], process.argv[3]], { stdio: "ignore" });
 setInterval(() => {}, 1_000);
 `,
     );
     await chmod(executable, 0o700);
     const controller = new AbortController();
     const running = new NodeProcessRunner().run({
-      argv: [process.execPath, executable],
+      argv: [process.execPath, executable, grandchild, marker],
       cwd: root,
       env: {},
       signal: controller.signal,
