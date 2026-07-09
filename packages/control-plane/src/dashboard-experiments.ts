@@ -346,7 +346,11 @@ export function createDashboardExperimentService(db: Database) {
           },
           primaryMetric: primaryMetricFor({
             result: result ?? null,
-            metrics: result ? (metricsByResultId.get(result.id) ?? []) : [],
+            metrics: result
+              ? (metricsByResultId.get(
+                  result.id,
+                ) as (typeof metrics.$inferSelect)[])
+              : [],
             terminal: attempt?.terminal ?? null,
           }),
         };

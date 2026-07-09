@@ -5,6 +5,38 @@ import { createDashboardExperimentService } from "./dashboard-experiments";
 type DashboardDatabase = Parameters<typeof createDashboardExperimentService>[0];
 
 describe("createDashboardExperimentService", () => {
+  it("uses a generic launch rejection when preview has no blockers", async () => {
+    const service = createDashboardExperimentService(
+      {} as unknown as DashboardDatabase,
+    );
+    const input = {
+      name: "No blocker launch",
+      runnerId: "runner-1",
+      credentialProfileId: "credential-1",
+      modelRoutes: [],
+      harnesses: [],
+      toolsets: [],
+    };
+
+    await expect(
+      service.launchExperiment.call(
+        {
+          previewExperiment: () =>
+            Promise.resolve({
+              input,
+              projectedJobCount: 0,
+              spend: { kind: "unknown" },
+              canLaunch: false,
+              blockers: [],
+              order: [],
+            }),
+        },
+        { userId: "owner-1", githubLogin: "owner", isAdmin: false },
+        { ...input, spendConfirmed: true },
+      ),
+    ).rejects.toThrow("Experiment cannot be launched.");
+  });
+
   it("rejects experiment detail rows whose job target is missing", async () => {
     const db = {
       query: {
