@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { createDashboardExperimentService } from "./dashboard-experiments";
@@ -11,26 +12,24 @@ describe("createDashboardExperimentService", () => {
     );
     const input = {
       name: "No blocker launch",
-      runnerId: "runner-1",
-      credentialProfileId: "credential-1",
+      runnerId: randomUUID(),
+      credentialProfileId: randomUUID(),
       modelRoutes: [],
       harnesses: [],
       toolsets: [],
     };
+    service.previewExperiment = (_actor, parsedInput) =>
+      Promise.resolve({
+        input: parsedInput,
+        projectedJobCount: 0,
+        spend: { kind: "unknown" },
+        canLaunch: false,
+        blockers: [],
+        order: [],
+      });
 
     await expect(
-      service.launchExperiment.call(
-        {
-          previewExperiment: () =>
-            Promise.resolve({
-              input,
-              projectedJobCount: 0,
-              spend: { kind: "unknown" },
-              canLaunch: false,
-              blockers: [],
-              order: [],
-            }),
-        },
+      service.launchExperiment(
         { userId: "owner-1", githubLogin: "owner", isAdmin: false },
         { ...input, spendConfirmed: true },
       ),
@@ -38,12 +37,15 @@ describe("createDashboardExperimentService", () => {
   });
 
   it("rejects experiment detail rows whose job target is missing", async () => {
+    const experimentId = randomUUID();
+    const jobId = randomUUID();
+    const missingTargetId = randomUUID();
     const db = {
       query: {
         experiments: {
           findFirst: () =>
             Promise.resolve({
-              id: "experiment-corrupt",
+              id: experimentId,
               ownerId: "owner-1",
               name: "Corrupt experiment",
             }),
@@ -53,8 +55,8 @@ describe("createDashboardExperimentService", () => {
           findMany: () =>
             Promise.resolve([
               {
-                id: "job-missing-target",
-                targetId: "target-missing",
+                id: jobId,
+                targetId: missingTargetId,
                 status: "queued",
                 retryOfJobId: null,
                 cancellationRequested: false,
@@ -66,16 +68,13 @@ describe("createDashboardExperimentService", () => {
         metrics: { findMany: () => Promise.resolve([]) },
       },
     } as unknown as DashboardDatabase;
-
     const service = createDashboardExperimentService(db);
 
     await expect(
       service.getExperiment(
         { userId: "owner-1", githubLogin: "owner", isAdmin: false },
-        "experiment-corrupt",
+        experimentId,
       ),
-    ).rejects.toThrow(
-      "Experiment target not found for job job-missing-target.",
-    );
+    ).rejects.toThrow(`Experiment target not found for job ${jobId}.`);
   });
 });
