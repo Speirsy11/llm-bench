@@ -32,6 +32,7 @@ export interface QueuedRunnerJob {
   cancellationRequested: boolean;
   experimentId?: string;
   targetId?: string;
+  retryOfJobId?: string | null;
 }
 
 export interface RunnerAttempt {
@@ -108,6 +109,8 @@ export function createInMemoryRunnerJobStore(): InMemoryRunnerJobStore {
           (candidate) =>
             candidate.status === "queued" &&
             candidate.ownerId === runner.ownerId &&
+            (!candidate.assignedRunnerId ||
+              candidate.assignedRunnerId === runner.id) &&
             candidate.requiredCapabilities.every((capability) =>
               runner.capabilities.includes(capability),
             ),

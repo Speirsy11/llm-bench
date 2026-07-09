@@ -22,6 +22,7 @@
     "postinstall": "pnpm lint:ws",
     "test": "turbo run test",
     "test:coverage": "turbo run test:coverage",
+    "test:e2e": "playwright test",
     "test:integration": "turbo run test:integration",
     "test:runner-contract": "turbo run test --filter=@speirsy11/llm-bench-runner --filter=@llm-bench/codex-harness",
     "test:watch": "turbo run test:watch",
@@ -29,6 +30,7 @@
   },
   "devDependencies": {
     "@llm-bench/prettier-config": "workspace:*",
+    "@playwright/test": "^1.61.1",
     "@turbo/gen": "^2.5.8",
     "prettier": "catalog:",
     "turbo": "^2.5.8",

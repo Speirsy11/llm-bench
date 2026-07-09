@@ -4,6 +4,7 @@ import { and, eq } from "drizzle-orm";
 import type { AuthContext } from "./access-policy";
 import type { Experiment, User } from "./schema";
 import { canCurateExperiment, canReadExperiment } from "./access-policy";
+import { createDashboardExperimentService } from "./dashboard-experiments";
 import { createDatabase } from "./database";
 import { experiments, users } from "./schema";
 
@@ -26,8 +27,10 @@ export function createControlPlane({
   readonly connectionString: string;
 }) {
   const database = createDatabase(connectionString);
+  const dashboard = createDashboardExperimentService(database.db);
 
   return {
+    dashboard,
     users: {
       async upsertGitHubIdentity(input: GitHubIdentityInput): Promise<User> {
         const [user] = await database.db

@@ -21,15 +21,23 @@ import type {
 } from "./runner-protocol";
 import type * as schemaType from "./schema";
 import {
+  metricDefinitionForId,
+  primaryMetricIdForBenchmark,
+} from "./benchmark-registry";
+import {
+  artifacts,
   attempts,
   experiments,
   jobs,
+  metrics,
+  results,
   runnerEvents,
   runnerPairings,
   runners,
 } from "./schema";
 
 type Database = PostgresJsDatabase<typeof schemaType>;
+type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
 export class PostgresRunnerProtocolStore implements RunnerProtocolStore {
   constructor(private readonly db: Database) {}
@@ -165,11 +173,13 @@ export class PostgresRunnerJobStore implements RunnerJobStore {
       id: job.id,
       experimentId: job.experimentId,
       targetId: job.targetId,
+      runnerId: job.assignedRunnerId,
       benchmarkId: job.benchmark.id,
       benchmarkVersion: job.benchmark.version,
       requiredCapabilities: job.requiredCapabilities,
       status: job.status,
       cancellationRequested: job.cancellationRequested,
+      retryOfJobId: job.retryOfJobId,
     });
   }
 
@@ -211,6 +221,7 @@ export class PostgresRunnerJobStore implements RunnerJobStore {
           and(
             eq(jobs.status, "queued"),
             eq(experiments.ownerId, runner.ownerId),
+            or(isNull(jobs.runnerId), eq(jobs.runnerId, runner.id)),
             sql`${jobs.benchmarkId} is not null`,
             sql`${jobs.benchmarkVersion} is not null`,
             sql`${jobs.requiredCapabilities} <@ ${JSON.stringify(runner.capabilities)}::jsonb`,
@@ -308,7 +319,7 @@ export class PostgresRunnerJobStore implements RunnerJobStore {
       "uploading",
     ] as const;
     await this.db.transaction(async (transaction) => {
-      await transaction
+      const updatedAttempts = await transaction
         .update(attempts)
         .set({ status, terminal, finishedAt: new Date() })
         .where(
@@ -316,11 +327,14 @@ export class PostgresRunnerJobStore implements RunnerJobStore {
             eq(attempts.id, attemptId),
             inArray(attempts.status, activeStatuses),
           ),
-        );
+        )
+        .returning();
       await transaction
         .update(jobs)
         .set({ status, updatedAt: new Date() })
         .where(and(eq(jobs.id, jobId), inArray(jobs.status, activeStatuses)));
+      if (updatedAttempts.length === 0 || !terminal) return;
+      await persistTerminalResult(transaction, jobId, attemptId, terminal);
     });
   }
 
@@ -394,6 +408,82 @@ function pairingFromRow(
   };
 }
 
+async function persistTerminalResult(
+  transaction: Transaction,
+  jobId: string,
+  attemptId: string,
+  terminal: NonNullable<RunnerAttempt["terminal"]>,
+): Promise<void> {
+  if (
+    terminal.status !== "completed" &&
+    terminal.observations.length === 0 &&
+    terminal.artifacts.length === 0
+  ) {
+    return;
+  }
+  const [job] = await transaction
+    .select()
+    .from(jobs)
+    .where(eq(jobs.id, jobId))
+    .limit(1);
+  if (!job?.benchmarkId || !job.benchmarkVersion) {
+    throw new Error("Completed job is missing benchmark metadata.");
+  }
+  const primaryMetricId = primaryMetricIdForBenchmark(job.benchmarkId);
+  const [insertedResult] = await transaction
+    .insert(results)
+    .values({
+      attemptId,
+      benchmarkId: job.benchmarkId,
+      benchmarkVersion: job.benchmarkVersion,
+      primaryMetricId,
+      summary: { status: terminal.status, error: terminal.error },
+    })
+    .onConflictDoNothing({ target: results.attemptId })
+    .returning();
+  const result =
+    insertedResult ??
+    (
+      await transaction
+        .select()
+        .from(results)
+        .where(eq(results.attemptId, attemptId))
+        .limit(1)
+    )[0]!;
+  for (const observation of terminal.observations) {
+    const definition = metricDefinitionForId(observation.metricId);
+    await transaction
+      .insert(metrics)
+      .values({
+        resultId: result.id,
+        metricId: observation.metricId,
+        kind: definition.kind,
+        unit: definition.unit,
+        direction: definition.direction,
+        value: observation.value,
+      })
+      .onConflictDoNothing({
+        target: [metrics.resultId, metrics.metricId],
+      });
+  }
+  if (terminal.artifacts.length > 0) {
+    await transaction
+      .insert(artifacts)
+      .values(
+        terminal.artifacts.map((artifact) => ({
+          resultId: result.id,
+          kind: artifact.kind,
+          blobPath: artifact.blobPath,
+          contentHash: artifact.contentHash,
+          byteLength: artifact.byteLength,
+        })),
+      )
+      .onConflictDoNothing({
+        target: [artifacts.resultId, artifacts.contentHash],
+      });
+  }
+}
+
 function runnerFromRow(row: typeof runners.$inferSelect): PairedRunner {
   return {
     id: row.id,
@@ -427,6 +517,7 @@ function jobFromRow(
     cancellationRequested: row.cancellationRequested,
     experimentId: row.experimentId,
     targetId: row.targetId,
+    retryOfJobId: row.retryOfJobId,
   };
 }
 

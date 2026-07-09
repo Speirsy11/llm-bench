@@ -228,4 +228,40 @@ describe("runner job leasing", () => {
       missingJobService.cancellationStatus(pairedRunner, lease),
     ).rejects.toThrow("Job is unavailable.");
   });
+
+  it("only leases runner-pinned jobs to the assigned runner", async () => {
+    const store = createInMemoryRunnerJobStore();
+    const service = createRunnerJobService({
+      store,
+      randomToken: () => "lease-token",
+    });
+    await store.enqueue({
+      id: "job-for-runner-2",
+      ownerId: "owner-1",
+      benchmark: { id: "repository-repair", version: "1.0.0" },
+      requiredCapabilities: ["workspaces", "files"],
+      status: "queued",
+      position: 0,
+      assignedRunnerId: "runner-2",
+      cancellationRequested: false,
+    });
+    await store.enqueue({
+      id: "job-for-runner-1",
+      ownerId: "owner-1",
+      benchmark: { id: "repository-repair", version: "1.0.0" },
+      requiredCapabilities: ["workspaces", "files"],
+      status: "queued",
+      position: 1,
+      assignedRunnerId: "runner-1",
+      cancellationRequested: false,
+    });
+
+    await expect(service.lease(runner("runner-1"))).resolves.toMatchObject({
+      jobId: "job-for-runner-1",
+    });
+    expect(store.inspect().jobs).toMatchObject([
+      { id: "job-for-runner-2", status: "queued" },
+      { id: "job-for-runner-1", status: "leased" },
+    ]);
+  });
 });

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -11,9 +12,11 @@ import {
   resetTestDatabase,
 } from "./index";
 import {
+  artifacts,
   attempts,
   experiments,
   jobs as jobRows,
+  results,
   targets,
   users,
 } from "./schema";
@@ -182,8 +185,18 @@ describe("durable runner protocol", () => {
       attemptId: lease.attemptId,
       leaseToken: lease.leaseToken,
       status: "completed",
-      observations: [{ metricId: "hidden_test_pass_ratio", value: 1 }],
-      artifacts: [],
+      observations: [
+        { metricId: "hidden_test_pass_ratio", value: 1 },
+        { metricId: "custom_count", value: 2 },
+      ],
+      artifacts: [
+        {
+          kind: "log",
+          blobPath: "blob://runner-one/attempt.log",
+          contentHash: "attempt-log-hash",
+          byteLength: 128,
+        },
+      ],
       error: null,
     });
     await jobService.complete(winner, {
@@ -195,6 +208,67 @@ describe("durable runner protocol", () => {
       artifacts: [],
       error: { message: "late conflicting terminal" },
     });
+    await database.db
+      .update(attempts)
+      .set({ status: "running" })
+      .where(eq(attempts.id, lease.attemptId));
+    await database.db
+      .update(jobRows)
+      .set({ status: "running" })
+      .where(eq(jobRows.id, lease.jobId));
+    await jobStore.complete(lease.attemptId, lease.jobId, "completed", {
+      attemptId: lease.attemptId,
+      status: "completed",
+      observations: [
+        { metricId: "hidden_test_pass_ratio", value: 1 },
+        { metricId: "custom_count", value: 2 },
+      ],
+      artifacts: [
+        {
+          kind: "log",
+          blobPath: "blob://runner-one/attempt.log",
+          contentHash: "attempt-log-hash",
+          byteLength: 128,
+        },
+      ],
+      error: null,
+    });
+    const resultRows = await database.db
+      .select()
+      .from(results)
+      .where(eq(results.attemptId, lease.attemptId));
+    expect(resultRows).toHaveLength(1);
+    const artifactRows = await database.db
+      .select()
+      .from(artifacts)
+      .where(eq(artifacts.resultId, resultRows[0]?.id ?? randomUUID()));
+    expect(artifactRows).toHaveLength(1);
+
+    await jobService.enqueue({
+      ownerId,
+      experimentId: experiment.id,
+      targetId: target.id,
+      benchmark: { id: "repository-repair", version: "1.0.0" },
+      requiredCapabilities: ["workspaces", "files"],
+    });
+    const emptyFailureLease = await jobService.lease(loser);
+    if (!emptyFailureLease) throw new Error("Expected empty failure lease.");
+    await jobService.complete(loser, {
+      protocolVersion: "1.0",
+      attemptId: emptyFailureLease.attemptId,
+      leaseToken: emptyFailureLease.leaseToken,
+      status: "failed",
+      observations: [],
+      artifacts: [],
+      error: { message: "empty failure" },
+    });
+    await expect(
+      database.db
+        .select()
+        .from(results)
+        .where(eq(results.attemptId, emptyFailureLease.attemptId)),
+    ).resolves.toHaveLength(0);
+
     await expect(
       jobService.saveCheckpoint(winner, {
         attemptId: lease.attemptId,
@@ -273,6 +347,36 @@ describe("durable runner protocol", () => {
     await expect(jobStore.findJob(malformedJobId)).rejects.toThrow(
       "missing benchmark metadata",
     );
+    const malformedCompletionJobId = randomUUID();
+    await database.db.insert(jobRows).values({
+      id: malformedCompletionJobId,
+      experimentId: experiment.id,
+      targetId: target.id,
+      status: "leased",
+    });
+    const malformedCompletionAttemptId = randomUUID();
+    await database.db.insert(attempts).values({
+      id: malformedCompletionAttemptId,
+      jobId: malformedCompletionJobId,
+      number: 1,
+      status: "leased",
+      runnerId: loser.id,
+      leaseTokenHash: "lease-token-hash",
+    });
+    await expect(
+      jobStore.complete(
+        malformedCompletionAttemptId,
+        malformedCompletionJobId,
+        "completed",
+        {
+          attemptId: malformedCompletionAttemptId,
+          status: "completed",
+          observations: [{ metricId: "hidden_test_pass_ratio", value: 1 }],
+          artifacts: [],
+          error: null,
+        },
+      ),
+    ).rejects.toThrow("missing benchmark metadata");
     const malformedAttemptId = randomUUID();
     await database.db.insert(attempts).values({
       id: malformedAttemptId,
