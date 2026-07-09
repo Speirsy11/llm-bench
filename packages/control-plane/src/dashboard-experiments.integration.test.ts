@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -11,6 +12,11 @@ import {
   PostgresRunnerProtocolStore,
   resetTestDatabase,
 } from "./index";
+import {
+  attempts as attemptRows,
+  metrics as metricRows,
+  results as resultRows,
+} from "./schema";
 
 const connectionString = process.env.TEST_DATABASE_URL;
 if (!connectionString) {
@@ -164,6 +170,74 @@ describe("dashboard experiment orchestration", () => {
           target: { modelRoute: { id: "openrouter-llama" } },
           primaryMetric: null,
         },
+      ],
+    });
+
+    if (!detail) throw new Error("Expected experiment detail.");
+    const completedJobId = detail.jobs[0]?.id;
+    if (!completedJobId) throw new Error("Expected completed job.");
+    const [attempt] = await database.db
+      .select()
+      .from(attemptRows)
+      .where(eq(attemptRows.jobId, completedJobId))
+      .limit(1);
+    if (!attempt) throw new Error("Expected completed attempt.");
+    const [result] = await database.db
+      .select()
+      .from(resultRows)
+      .where(eq(resultRows.attemptId, attempt.id))
+      .limit(1);
+    if (!result) throw new Error("Expected completed result.");
+    await database.db
+      .delete(metricRows)
+      .where(eq(metricRows.resultId, result.id));
+    await database.db
+      .update(attemptRows)
+      .set({
+        terminal: {
+          attemptId: attempt.id,
+          status: "completed",
+          observations: [{ metricId: "hidden_test_pass_ratio", value: 0.75 }],
+          artifacts: [],
+          error: null,
+        },
+      })
+      .where(eq(attemptRows.id, attempt.id));
+
+    await expect(
+      controlPlane.dashboard.getExperiment(actor, launched.id),
+    ).resolves.toMatchObject({
+      jobs: [
+        {
+          id: completedJobId,
+          primaryMetric: { id: "hidden_test_pass_ratio", value: 0.75 },
+        },
+        { primaryMetric: null },
+      ],
+    });
+
+    await database.db
+      .update(attemptRows)
+      .set({
+        terminal: {
+          attemptId: attempt.id,
+          status: "completed",
+          observations: "malformed",
+          artifacts: [],
+          error: null,
+        },
+      })
+      .where(eq(attemptRows.id, attempt.id));
+
+    await expect(
+      controlPlane.dashboard.getExperiment(actor, launched.id),
+    ).resolves.toMatchObject({
+      jobs: [
+        {
+          id: completedJobId,
+          primaryMetric: { id: "hidden_test_pass_ratio", value: null },
+        },
+        { primaryMetric: null },
       ],
     });
   });

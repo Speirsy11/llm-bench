@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -11,9 +12,11 @@ import {
   resetTestDatabase,
 } from "./index";
 import {
+  artifacts,
   attempts,
   experiments,
   jobs as jobRows,
+  results,
   targets,
   users,
 } from "./schema";
@@ -182,8 +185,18 @@ describe("durable runner protocol", () => {
       attemptId: lease.attemptId,
       leaseToken: lease.leaseToken,
       status: "completed",
-      observations: [{ metricId: "hidden_test_pass_ratio", value: 1 }],
-      artifacts: [],
+      observations: [
+        { metricId: "hidden_test_pass_ratio", value: 1 },
+        { metricId: "custom_count", value: 2 },
+      ],
+      artifacts: [
+        {
+          kind: "log",
+          blobPath: "blob://runner-one/attempt.log",
+          contentHash: "attempt-log-hash",
+          byteLength: 128,
+        },
+      ],
       error: null,
     });
     await jobService.complete(winner, {
@@ -195,6 +208,41 @@ describe("durable runner protocol", () => {
       artifacts: [],
       error: { message: "late conflicting terminal" },
     });
+    await database.db
+      .update(attempts)
+      .set({ status: "running" })
+      .where(eq(attempts.id, lease.attemptId));
+    await database.db
+      .update(jobRows)
+      .set({ status: "running" })
+      .where(eq(jobRows.id, lease.jobId));
+    await jobStore.complete(lease.attemptId, lease.jobId, "completed", {
+      attemptId: lease.attemptId,
+      status: "completed",
+      observations: [
+        { metricId: "hidden_test_pass_ratio", value: 1 },
+        { metricId: "custom_count", value: 2 },
+      ],
+      artifacts: [
+        {
+          kind: "log",
+          blobPath: "blob://runner-one/attempt.log",
+          contentHash: "attempt-log-hash",
+          byteLength: 128,
+        },
+      ],
+      error: null,
+    });
+    const resultRows = await database.db
+      .select()
+      .from(results)
+      .where(eq(results.attemptId, lease.attemptId));
+    expect(resultRows).toHaveLength(1);
+    const artifactRows = await database.db
+      .select()
+      .from(artifacts)
+      .where(eq(artifacts.resultId, resultRows[0]?.id ?? randomUUID()));
+    expect(artifactRows).toHaveLength(1);
     await expect(
       jobService.saveCheckpoint(winner, {
         attemptId: lease.attemptId,
