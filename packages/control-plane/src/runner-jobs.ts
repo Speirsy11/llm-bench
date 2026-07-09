@@ -32,6 +32,7 @@ export interface QueuedRunnerJob {
   cancellationRequested: boolean;
   experimentId?: string;
   targetId?: string;
+  retryOfJobId?: string | null;
 }
 
 export interface RunnerAttempt {

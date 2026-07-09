@@ -172,6 +172,10 @@ export const experiments = pgTable(
     curatedBy: text("curated_by").references(() => users.id, {
       onDelete: "set null",
     }),
+    configurationSnapshot: jsonb("configuration_snapshot")
+      .$type<Record<string, unknown>>()
+      .default({})
+      .notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -182,6 +186,35 @@ export const experiments = pgTable(
   (table) => [
     index("experiments_owner_id_index").on(table.ownerId),
     index("experiments_visibility_index").on(table.visibility),
+  ],
+);
+
+export const credentialProfiles = pgTable(
+  "credential_profiles",
+  {
+    id: uuid().defaultRandom().primaryKey(),
+    ownerId: text("owner_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    runnerId: uuid("runner_id")
+      .notNull()
+      .references(() => runners.id, { onDelete: "cascade" }),
+    label: text().notNull(),
+    provider: text().notNull(),
+    maskedSecret: text("masked_secret").notNull(),
+    sealedCredential: jsonb("sealed_credential")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("credential_profiles_owner_id_index").on(table.ownerId),
+    index("credential_profiles_runner_id_index").on(table.runnerId),
   ],
 );
 
@@ -228,6 +261,7 @@ export const jobs = pgTable(
       .$type<string[]>()
       .default([])
       .notNull(),
+    retryOfJobId: uuid("retry_of_job_id"),
     queuePosition: integer("queue_position").generatedAlwaysAsIdentity(),
     cancellationRequested: boolean("cancellation_requested")
       .default(false)
@@ -241,6 +275,7 @@ export const jobs = pgTable(
   },
   (table) => [
     index("jobs_experiment_id_index").on(table.experimentId),
+    index("jobs_retry_of_job_id_index").on(table.retryOfJobId),
     index("jobs_runner_status_index").on(table.runnerId, table.status),
   ],
 );
@@ -350,3 +385,4 @@ export const artifacts = pgTable(
 
 export type User = typeof users.$inferSelect;
 export type Experiment = typeof experiments.$inferSelect;
+export type CredentialProfile = typeof credentialProfiles.$inferSelect;

@@ -21,15 +21,19 @@ import type {
 } from "./runner-protocol";
 import type * as schemaType from "./schema";
 import {
+  artifacts,
   attempts,
   experiments,
   jobs,
+  metrics,
+  results,
   runnerEvents,
   runnerPairings,
   runners,
 } from "./schema";
 
 type Database = PostgresJsDatabase<typeof schemaType>;
+type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
 export class PostgresRunnerProtocolStore implements RunnerProtocolStore {
   constructor(private readonly db: Database) {}
@@ -170,6 +174,7 @@ export class PostgresRunnerJobStore implements RunnerJobStore {
       requiredCapabilities: job.requiredCapabilities,
       status: job.status,
       cancellationRequested: job.cancellationRequested,
+      retryOfJobId: job.retryOfJobId,
     });
   }
 
@@ -308,7 +313,7 @@ export class PostgresRunnerJobStore implements RunnerJobStore {
       "uploading",
     ] as const;
     await this.db.transaction(async (transaction) => {
-      await transaction
+      const updatedAttempts = await transaction
         .update(attempts)
         .set({ status, terminal, finishedAt: new Date() })
         .where(
@@ -316,11 +321,14 @@ export class PostgresRunnerJobStore implements RunnerJobStore {
             eq(attempts.id, attemptId),
             inArray(attempts.status, activeStatuses),
           ),
-        );
+        )
+        .returning();
       await transaction
         .update(jobs)
         .set({ status, updatedAt: new Date() })
         .where(and(eq(jobs.id, jobId), inArray(jobs.status, activeStatuses)));
+      if (updatedAttempts.length === 0 || !terminal) return;
+      await persistTerminalResult(transaction, jobId, attemptId, terminal);
     });
   }
 
@@ -394,6 +402,97 @@ function pairingFromRow(
   };
 }
 
+async function persistTerminalResult(
+  transaction: Transaction,
+  jobId: string,
+  attemptId: string,
+  terminal: NonNullable<RunnerAttempt["terminal"]>,
+): Promise<void> {
+  if (
+    terminal.status !== "completed" &&
+    terminal.observations.length === 0 &&
+    terminal.artifacts.length === 0
+  ) {
+    return;
+  }
+  const [job] = await transaction
+    .select()
+    .from(jobs)
+    .where(eq(jobs.id, jobId))
+    .limit(1);
+  if (!job?.benchmarkId || !job.benchmarkVersion) {
+    throw new Error("Completed job is missing benchmark metadata.");
+  }
+  const primaryMetricId = primaryMetricIdFor(job.benchmarkId);
+  const [insertedResult] = await transaction
+    .insert(results)
+    .values({
+      attemptId,
+      benchmarkId: job.benchmarkId,
+      benchmarkVersion: job.benchmarkVersion,
+      primaryMetricId,
+      summary: { status: terminal.status, error: terminal.error },
+    })
+    .onConflictDoNothing({ target: results.attemptId })
+    .returning();
+  const result =
+    insertedResult ??
+    (
+      await transaction
+        .select()
+        .from(results)
+        .where(eq(results.attemptId, attemptId))
+        .limit(1)
+    )[0];
+  if (!result) throw new Error("Result was not stored.");
+  for (const observation of terminal.observations) {
+    const definition = metricDefinitionFor(observation.metricId);
+    await transaction
+      .insert(metrics)
+      .values({
+        resultId: result.id,
+        metricId: observation.metricId,
+        kind: definition.kind,
+        unit: definition.unit,
+        direction: definition.direction,
+        value: observation.value,
+      })
+      .onConflictDoNothing({
+        target: [metrics.resultId, metrics.metricId],
+      });
+  }
+  if (terminal.artifacts.length > 0) {
+    await transaction.insert(artifacts).values(
+      terminal.artifacts.map((artifact) => ({
+        resultId: result.id,
+        kind: artifact.kind,
+        blobPath: artifact.blobPath,
+        contentHash: artifact.contentHash,
+        byteLength: artifact.byteLength,
+      })),
+    );
+  }
+}
+
+function primaryMetricIdFor(benchmarkId: string): string | null {
+  return benchmarkId === "repository-repair" ? "hidden_test_pass_ratio" : null;
+}
+
+function metricDefinitionFor(metricId: string) {
+  if (metricId === "hidden_test_pass_ratio") {
+    return {
+      kind: "ratio",
+      unit: "ratio",
+      direction: "higher_is_better",
+    } as const;
+  }
+  return {
+    kind: "count",
+    unit: "count",
+    direction: "higher_is_better",
+  } as const;
+}
+
 function runnerFromRow(row: typeof runners.$inferSelect): PairedRunner {
   return {
     id: row.id,
@@ -427,6 +526,7 @@ function jobFromRow(
     cancellationRequested: row.cancellationRequested,
     experimentId: row.experimentId,
     targetId: row.targetId,
+    retryOfJobId: row.retryOfJobId,
   };
 }
 
