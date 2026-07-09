@@ -1,6 +1,7 @@
 export * from "./access-policy";
 export * from "./auth-context";
 export * from "./auth-adapter";
+export * from "./benchmark-registry";
 export * from "./control-plane";
 export * from "./dashboard-experiments";
 export * from "./database";

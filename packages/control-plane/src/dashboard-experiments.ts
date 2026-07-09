@@ -14,6 +14,7 @@ import type {
 import type { AuthContext } from "./access-policy";
 import type { PairedRunner } from "./runner-protocol";
 import type * as schemaType from "./schema";
+import { repositoryRepairBenchmark } from "./benchmark-registry";
 import {
   attempts,
   credentialProfiles,
@@ -27,29 +28,20 @@ import {
 
 type Database = PostgresJsDatabase<typeof schemaType>;
 
-const repositoryRepairBenchmark = {
-  id: "repository-repair",
-  version: "1.0.0",
-  requiredCapabilities: ["workspaces", "files"],
-  primaryMetric: {
-    id: "hidden_test_pass_ratio",
-    label: "Hidden test pass ratio",
-    kind: "ratio",
-    unit: "ratio",
-    direction: "higher_is_better",
-  },
-} as const satisfies {
-  id: string;
-  version: string;
-  requiredCapabilities: readonly Capability[];
-  primaryMetric: {
-    id: string;
-    label: string;
-    kind: MetricKind;
-    unit: string;
-    direction: MetricDirection;
-  };
-};
+const activeJobStatuses = [
+  "queued",
+  "leased",
+  "preparing",
+  "running",
+  "grading",
+  "uploading",
+] as const;
+
+const terminalRetryableStatuses = [
+  "failed",
+  "cancelled",
+  "interrupted",
+] as const;
 
 export interface SealedCredentialSnapshot {
   readonly algorithm: "x25519-xsalsa20-poly1305-sealed-box";
@@ -138,6 +130,8 @@ export interface DashboardJobDetail {
   } | null;
 }
 
+export type DashboardRunner = Omit<PairedRunner, "tokenHash">;
+
 export function createDashboardExperimentService(db: Database) {
   return {
     async saveCredentialProfile(
@@ -173,7 +167,7 @@ export function createDashboardExperimentService(db: Database) {
       });
     },
 
-    async listRunners(actor: AuthContext): Promise<PairedRunner[]> {
+    async listRunners(actor: AuthContext): Promise<DashboardRunner[]> {
       const rows = await db.query.runners.findMany({
         where: eq(runners.ownerId, actor.userId),
         orderBy: asc(runners.createdAt),
@@ -185,7 +179,6 @@ export function createDashboardExperimentService(db: Database) {
         publicKey: row.publicKey,
         capabilities: row.capabilities as Capability[],
         environment: row.environment as PairedRunner["environment"],
-        tokenHash: row.tokenHash ?? "",
         revokedAt: row.revokedAt,
         status: row.status,
         lastSeenAt: row.lastSeenAt,
@@ -263,6 +256,7 @@ export function createDashboardExperimentService(db: Database) {
           await transaction.insert(jobs).values({
             experimentId: experiment.id,
             targetId: target.id,
+            runnerId: preview.input.runnerId,
             benchmarkId: repositoryRepairBenchmark.id,
             benchmarkVersion: repositoryRepairBenchmark.version,
             requiredCapabilities: [
@@ -384,42 +378,80 @@ export function createDashboardExperimentService(db: Database) {
 
     async cancelJob(actor: AuthContext, jobId: string): Promise<void> {
       const job = await requireOwnedJob(db, actor, jobId);
-      await db
-        .update(jobs)
-        .set({ cancellationRequested: true, updatedAt: new Date() })
-        .where(
-          and(
-            eq(jobs.id, job.id),
-            inArray(jobs.status, [
-              "queued",
-              "leased",
-              "preparing",
-              "running",
-              "grading",
-              "uploading",
-            ]),
-          ),
-        );
+      await db.transaction(async (transaction) => {
+        await transaction
+          .update(jobs)
+          .set({
+            status: "cancelled",
+            cancellationRequested: true,
+            updatedAt: new Date(),
+          })
+          .where(and(eq(jobs.id, job.id), eq(jobs.status, "queued")));
+
+        await transaction
+          .update(jobs)
+          .set({ cancellationRequested: true, updatedAt: new Date() })
+          .where(
+            and(
+              eq(jobs.id, job.id),
+              inArray(jobs.status, [
+                "leased",
+                "preparing",
+                "running",
+                "grading",
+                "uploading",
+              ]),
+            ),
+          );
+      });
     },
 
     async retryJob(actor: AuthContext, jobId: string) {
       const job = await requireOwnedJob(db, actor, jobId);
-      if (!["failed", "cancelled", "interrupted"].includes(job.status)) {
+      if (!terminalRetryableStatuses.some((status) => status === job.status)) {
         throw new Error("Only terminal unsuccessful jobs can be retried.");
       }
-      const [retry] = await db
-        .insert(jobs)
-        .values({
-          experimentId: job.experimentId,
-          targetId: job.targetId,
-          benchmarkId: job.benchmarkId,
-          benchmarkVersion: job.benchmarkVersion,
-          requiredCapabilities: job.requiredCapabilities,
-          retryOfJobId: job.id,
-        })
-        .returning();
-      if (!retry) throw new Error("Retry job was not created.");
-      return retry;
+      return db.transaction(async (transaction) => {
+        const [existingRetry] = await transaction
+          .select()
+          .from(jobs)
+          .where(
+            and(
+              eq(jobs.retryOfJobId, job.id),
+              inArray(jobs.status, activeJobStatuses),
+            ),
+          )
+          .limit(1);
+        if (existingRetry) return existingRetry;
+
+        const [retry] = await transaction
+          .insert(jobs)
+          .values({
+            experimentId: job.experimentId,
+            targetId: job.targetId,
+            runnerId: job.runnerId,
+            benchmarkId: job.benchmarkId,
+            benchmarkVersion: job.benchmarkVersion,
+            requiredCapabilities: job.requiredCapabilities,
+            retryOfJobId: job.id,
+          })
+          .onConflictDoNothing()
+          .returning();
+        if (retry) return retry;
+
+        const [concurrentRetry] = await transaction
+          .select()
+          .from(jobs)
+          .where(
+            and(
+              eq(jobs.retryOfJobId, job.id),
+              inArray(jobs.status, activeJobStatuses),
+            ),
+          )
+          .limit(1);
+        if (!concurrentRetry) throw new Error("Retry job was not created.");
+        return concurrentRetry;
+      });
     },
   };
 }
@@ -589,8 +621,9 @@ function primaryMetricFor(input: {
       value: observed.value,
     };
   }
+  const observations = input.terminal?.observations;
   const terminalObservations = (
-    (input.terminal?.observations as MetricObservation[] | undefined) ?? []
+    Array.isArray(observations) ? (observations as MetricObservation[]) : []
   ).filter(
     (observation) =>
       observation.metricId === repositoryRepairBenchmark.primaryMetric.id,

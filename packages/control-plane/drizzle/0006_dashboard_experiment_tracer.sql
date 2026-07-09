@@ -17,4 +17,6 @@ ALTER TABLE "jobs" ADD COLUMN "retry_of_job_id" uuid;--> statement-breakpoint
 ALTER TABLE "jobs" ADD CONSTRAINT "jobs_retry_of_job_id_jobs_id_fk" FOREIGN KEY ("retry_of_job_id") REFERENCES "public"."jobs"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "credential_profiles_owner_id_index" ON "credential_profiles" USING btree ("owner_id");--> statement-breakpoint
 CREATE INDEX "credential_profiles_runner_id_index" ON "credential_profiles" USING btree ("runner_id");--> statement-breakpoint
-CREATE INDEX "jobs_retry_of_job_id_index" ON "jobs" USING btree ("retry_of_job_id");
+CREATE INDEX "jobs_retry_of_job_id_index" ON "jobs" USING btree ("retry_of_job_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "jobs_active_retry_unique" ON "jobs" USING btree ("retry_of_job_id") WHERE "retry_of_job_id" IS NOT NULL AND "status" IN ('queued', 'leased', 'preparing', 'running', 'grading', 'uploading');--> statement-breakpoint
+CREATE UNIQUE INDEX "artifacts_result_content_hash_unique" ON "artifacts" USING btree ("result_id","content_hash");

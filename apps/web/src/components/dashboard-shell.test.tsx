@@ -145,7 +145,6 @@ describe("DashboardShell", () => {
               sandboxMode: "process",
               contentHashes: {},
             },
-            tokenHash: "token-hash",
             revokedAt: null,
             status: "online",
             lastSeenAt: new Date("2026-07-09T09:00:00.000Z"),
@@ -159,7 +158,9 @@ describe("DashboardShell", () => {
     expect(html).toContain("OpenRouter production");
     expect(html).toContain("projected jobs");
     expect(html).toContain("Hidden test pass ratio");
-    expect(html).toContain("1");
+    expect(html).toMatch(
+      new RegExp("Hidden test pass ratio:[\\s\\S]*>1</span>"),
+    );
   });
 
   it("renders empty states before runner pairing and credential setup", () => {
@@ -278,6 +279,8 @@ describe("DashboardShell", () => {
     expect(html).toContain("Jobs active");
     expect(html).toContain('http-equiv="refresh"');
     expect(html).toContain("limited is missing files.");
+    expect(html).toContain("Resolve matrix blockers before launching.");
+    expect(html).not.toContain("Launch experiment");
     expect(html).toContain("Cancel");
     expect(html).toContain("Retry");
     expect(html).toContain("unknown");
@@ -320,7 +323,6 @@ function runnerFixture({
       sandboxMode: "process",
       contentHashes: {},
     },
-    tokenHash: "token-hash",
     revokedAt: null,
     status,
     lastSeenAt: new Date("2026-07-09T09:00:00.000Z"),

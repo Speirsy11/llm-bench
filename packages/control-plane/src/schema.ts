@@ -1,3 +1,5 @@
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
@@ -261,7 +263,10 @@ export const jobs = pgTable(
       .$type<string[]>()
       .default([])
       .notNull(),
-    retryOfJobId: uuid("retry_of_job_id"),
+    retryOfJobId: uuid("retry_of_job_id").references(
+      (): AnyPgColumn => jobs.id,
+      { onDelete: "set null" },
+    ),
     queuePosition: integer("queue_position").generatedAlwaysAsIdentity(),
     cancellationRequested: boolean("cancellation_requested")
       .default(false)
@@ -277,6 +282,11 @@ export const jobs = pgTable(
     index("jobs_experiment_id_index").on(table.experimentId),
     index("jobs_retry_of_job_id_index").on(table.retryOfJobId),
     index("jobs_runner_status_index").on(table.runnerId, table.status),
+    uniqueIndex("jobs_active_retry_unique")
+      .on(table.retryOfJobId)
+      .where(
+        sql`${table.retryOfJobId} is not null and ${table.status} in ('queued', 'leased', 'preparing', 'running', 'grading', 'uploading')`,
+      ),
   ],
 );
 
@@ -380,7 +390,13 @@ export const artifacts = pgTable(
       .defaultNow()
       .notNull(),
   },
-  (table) => [index("artifacts_result_id_index").on(table.resultId)],
+  (table) => [
+    index("artifacts_result_id_index").on(table.resultId),
+    uniqueIndex("artifacts_result_content_hash_unique").on(
+      table.resultId,
+      table.contentHash,
+    ),
+  ],
 );
 
 export type User = typeof users.$inferSelect;

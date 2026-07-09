@@ -21,6 +21,10 @@ import type {
 } from "./runner-protocol";
 import type * as schemaType from "./schema";
 import {
+  metricDefinitionForId,
+  primaryMetricIdForBenchmark,
+} from "./benchmark-registry";
+import {
   artifacts,
   attempts,
   experiments,
@@ -169,6 +173,7 @@ export class PostgresRunnerJobStore implements RunnerJobStore {
       id: job.id,
       experimentId: job.experimentId,
       targetId: job.targetId,
+      runnerId: job.assignedRunnerId,
       benchmarkId: job.benchmark.id,
       benchmarkVersion: job.benchmark.version,
       requiredCapabilities: job.requiredCapabilities,
@@ -216,6 +221,7 @@ export class PostgresRunnerJobStore implements RunnerJobStore {
           and(
             eq(jobs.status, "queued"),
             eq(experiments.ownerId, runner.ownerId),
+            or(isNull(jobs.runnerId), eq(jobs.runnerId, runner.id)),
             sql`${jobs.benchmarkId} is not null`,
             sql`${jobs.benchmarkVersion} is not null`,
             sql`${jobs.requiredCapabilities} <@ ${JSON.stringify(runner.capabilities)}::jsonb`,
@@ -423,7 +429,7 @@ async function persistTerminalResult(
   if (!job?.benchmarkId || !job.benchmarkVersion) {
     throw new Error("Completed job is missing benchmark metadata.");
   }
-  const primaryMetricId = primaryMetricIdFor(job.benchmarkId);
+  const primaryMetricId = primaryMetricIdForBenchmark(job.benchmarkId);
   const [insertedResult] = await transaction
     .insert(results)
     .values({
@@ -446,7 +452,7 @@ async function persistTerminalResult(
     )[0];
   if (!result) throw new Error("Result was not stored.");
   for (const observation of terminal.observations) {
-    const definition = metricDefinitionFor(observation.metricId);
+    const definition = metricDefinitionForId(observation.metricId);
     await transaction
       .insert(metrics)
       .values({
@@ -462,35 +468,21 @@ async function persistTerminalResult(
       });
   }
   if (terminal.artifacts.length > 0) {
-    await transaction.insert(artifacts).values(
-      terminal.artifacts.map((artifact) => ({
-        resultId: result.id,
-        kind: artifact.kind,
-        blobPath: artifact.blobPath,
-        contentHash: artifact.contentHash,
-        byteLength: artifact.byteLength,
-      })),
-    );
+    await transaction
+      .insert(artifacts)
+      .values(
+        terminal.artifacts.map((artifact) => ({
+          resultId: result.id,
+          kind: artifact.kind,
+          blobPath: artifact.blobPath,
+          contentHash: artifact.contentHash,
+          byteLength: artifact.byteLength,
+        })),
+      )
+      .onConflictDoNothing({
+        target: [artifacts.resultId, artifacts.contentHash],
+      });
   }
-}
-
-function primaryMetricIdFor(benchmarkId: string): string | null {
-  return benchmarkId === "repository-repair" ? "hidden_test_pass_ratio" : null;
-}
-
-function metricDefinitionFor(metricId: string) {
-  if (metricId === "hidden_test_pass_ratio") {
-    return {
-      kind: "ratio",
-      unit: "ratio",
-      direction: "higher_is_better",
-    } as const;
-  }
-  return {
-    kind: "count",
-    unit: "count",
-    direction: "higher_is_better",
-  } as const;
 }
 
 function runnerFromRow(row: typeof runners.$inferSelect): PairedRunner {

@@ -4,13 +4,21 @@ import Link from "next/link";
 import type {
   CredentialProfile,
   DashboardExperimentDetail,
+  DashboardRunner,
   ExperimentPreview,
-  PairedRunner,
 } from "@llm-bench/control-plane";
 
 import { DashboardPoller } from "./dashboard-poller";
 
 type FormAction = (formData: FormData) => void | Promise<void>;
+const activeJobStatuses = new Set([
+  "queued",
+  "leased",
+  "preparing",
+  "running",
+  "grading",
+  "uploading",
+]);
 
 export function DashboardShell({
   cancelJobAction,
@@ -32,23 +40,17 @@ export function DashboardShell({
   readonly name: string;
   readonly preview: ExperimentPreview | null;
   readonly retryJobAction?: FormAction;
-  readonly runners: readonly PairedRunner[];
+  readonly runners: readonly DashboardRunner[];
   readonly saveCredentialProfileAction?: FormAction;
 }) {
   const activePolling = experiments.some((experiment) =>
-    experiment.jobs.some((job) =>
-      [
-        "queued",
-        "leased",
-        "preparing",
-        "running",
-        "grading",
-        "uploading",
-      ].includes(job.status),
-    ),
+    experiment.jobs.some((job) => activeJobStatuses.has(job.status)),
   );
   const primaryRunner = runners[0] ?? null;
   const primaryCredential = credentialProfiles[0] ?? null;
+  const canLaunch = Boolean(
+    primaryRunner && primaryCredential && preview?.canLaunch,
+  );
 
   return (
     <main className="bg-background text-foreground min-h-screen">
@@ -211,7 +213,7 @@ export function DashboardShell({
         <section className="border-border mt-8 border-t pt-8">
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
             <WorkspacePanel title="Experiment Matrix">
-              {primaryRunner && primaryCredential ? (
+              {canLaunch && primaryRunner && primaryCredential ? (
                 <form action={launchExperimentAction} className="grid gap-4">
                   <input
                     name="runnerId"
@@ -266,6 +268,8 @@ export function DashboardShell({
                     Launch experiment
                   </button>
                 </form>
+              ) : primaryRunner && primaryCredential ? (
+                <EmptyState text="Resolve matrix blockers before launching." />
               ) : (
                 <EmptyState text="Pair a runner and save a credential first." />
               )}
@@ -397,14 +401,7 @@ function ExperimentCard({
                 ) : null}
               </div>
               <div className="flex gap-2">
-                {[
-                  "queued",
-                  "leased",
-                  "preparing",
-                  "running",
-                  "grading",
-                  "uploading",
-                ].includes(job.status) ? (
+                {activeJobStatuses.has(job.status) ? (
                   <form action={cancelJobAction}>
                     <input name="jobId" type="hidden" value={job.id} />
                     <button
@@ -443,7 +440,11 @@ function EmptyState({ text }: { readonly text: string }) {
   );
 }
 
-function StatusPill({ status }: { readonly status: PairedRunner["status"] }) {
+function StatusPill({
+  status,
+}: {
+  readonly status: DashboardRunner["status"];
+}) {
   return (
     <span className="bg-muted rounded-md px-3 py-1 font-mono text-[11px] uppercase">
       {status}

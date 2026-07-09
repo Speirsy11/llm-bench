@@ -219,8 +219,11 @@ describe("dashboard experiment orchestration", () => {
     );
     expect(offlinePreview).toMatchObject({
       canLaunch: false,
-      blockers: ["Runner is offline."],
     });
+    expect(offlinePreview.blockers).toEqual([
+      "Runner is offline.",
+      "limited is missing files.",
+    ]);
     await expect(
       controlPlane.dashboard.launchExperiment(actor, {
         ...input,
@@ -317,21 +320,12 @@ describe("dashboard experiment orchestration", () => {
       store: new PostgresRunnerJobStore(database.db),
       randomToken: () => "retry-lease-token",
     });
-    const lease = await jobService.lease(runner);
-    expect(lease).toMatchObject({ cancellationRequested: true });
-    if (!lease) throw new Error("Expected cancelled lease.");
-    await jobService.complete(runner, {
-      protocolVersion: "1.0",
-      attemptId: lease.attemptId,
-      leaseToken: lease.leaseToken,
-      status: "cancelled",
-      observations: [],
-      artifacts: [],
-      error: null,
-    });
+    await expect(jobService.lease(runner)).resolves.toBeNull();
 
     const retry = await controlPlane.dashboard.retryJob(actor, jobId);
     expect(retry).toMatchObject({ retryOfJobId: jobId, status: "queued" });
+    const duplicateRetry = await controlPlane.dashboard.retryJob(actor, jobId);
+    expect(duplicateRetry.id).toBe(retry.id);
     const retriedDetail = await controlPlane.dashboard.getExperiment(
       actor,
       launched.id,

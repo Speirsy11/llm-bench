@@ -164,6 +164,7 @@ describe("database migrations", () => {
         "accounts",
         "artifacts",
         "attempts",
+        "credential_profiles",
         "experiments",
         "jobs",
         "metrics",

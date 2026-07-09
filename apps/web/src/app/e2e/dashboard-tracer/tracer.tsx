@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 type JobStatus = "queued" | "completed" | "cancelled";
 
@@ -12,18 +12,16 @@ interface Job {
   readonly metric: number | null;
 }
 
+const PREVIEW_TARGETS = [
+  "openrouter-gpt-4o · llmbench · builtin",
+  "openrouter-llama · llmbench · builtin",
+];
+
 export function FixtureDashboardTracer() {
   const [credentialSaved, setCredentialSaved] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
   const completedJobs = jobs.filter((job) => job.status === "completed").length;
   const activeJobs = jobs.filter((job) => job.status === "queued").length;
-  const preview = useMemo(
-    () => [
-      "openrouter-gpt-4o · llmbench · builtin",
-      "openrouter-llama · llmbench · builtin",
-    ],
-    [],
-  );
 
   return (
     <main className="bg-background text-foreground min-h-screen">
@@ -147,7 +145,7 @@ export function FixtureDashboardTracer() {
               2 projected jobs · spend unknown
             </p>
             <ol className="mt-4 space-y-2">
-              {preview.map((target, index) => (
+              {PREVIEW_TARGETS.map((target, index) => (
                 <li
                   className="rounded-lg border px-3 py-2 text-sm"
                   key={target}

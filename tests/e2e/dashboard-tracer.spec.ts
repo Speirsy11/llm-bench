@@ -20,7 +20,11 @@ test("dashboard tracer launches, cancels, retries, and renders a result", async 
     page.getByText("openrouter-llama · llmbench", { exact: true }),
   ).toBeVisible();
 
-  await page.getByRole("button", { name: "Cancel" }).nth(1).click();
+  await page
+    .getByText("openrouter-llama · llmbench", { exact: true })
+    .locator("xpath=ancestor::div[button][1]")
+    .getByRole("button", { name: "Cancel" })
+    .click();
   await expect(page.getByText("cancelled")).toBeVisible();
   await page.getByRole("button", { name: "Retry" }).click();
   await expect(page.getByText("queued · retry")).toBeVisible();
