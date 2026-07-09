@@ -1,6 +1,12 @@
 import type { FixtureHarness } from "@llm-bench/runner-engine";
 
-import { KNOWN_PATCH, MODULE_PATH } from "./fixture";
+import type { RepairFixtureId } from "./fixture";
+import {
+  DEFAULT_FIXTURE_ID,
+  KNOWN_PATCH,
+  MODULE_PATH,
+  repairFixture,
+} from "./fixture";
 
 /**
  * Deterministic fixture harnesses for the clamp repair task. These stand in for
@@ -9,23 +15,52 @@ import { KNOWN_PATCH, MODULE_PATH } from "./fixture";
  */
 
 /** Writes the given source over the module under repair. */
-export function createPatchHarness(source: string): FixtureHarness {
+export function createPatchHarness(source: string): FixtureHarness;
+export function createPatchHarness(
+  fixtureId: RepairFixtureId,
+  source: string,
+): FixtureHarness;
+export function createPatchHarness(
+  fixtureOrSource: string,
+  maybeSource?: string,
+): FixtureHarness {
+  const fixtureId =
+    maybeSource === undefined
+      ? DEFAULT_FIXTURE_ID
+      : (fixtureOrSource as RepairFixtureId);
+  const source = maybeSource ?? fixtureOrSource;
+  const modulePath = modulePathFor(fixtureId);
   return {
     repair: async ({ workspace }) => {
-      await workspace.writeFile(MODULE_PATH, source);
-      return { trajectory: [`read ${MODULE_PATH}`, `edit ${MODULE_PATH}`] };
+      await workspace.writeFile(modulePath, source);
+      return { trajectory: [`read ${modulePath}`, `edit ${modulePath}`] };
     },
   };
 }
 
 /** The canonical harness that applies the known good patch. */
-export function knownPatchHarness(): FixtureHarness {
-  return createPatchHarness(KNOWN_PATCH);
+export function knownPatchHarness(
+  fixtureId: RepairFixtureId = DEFAULT_FIXTURE_ID,
+): FixtureHarness {
+  const source =
+    fixtureId === DEFAULT_FIXTURE_ID
+      ? KNOWN_PATCH
+      : repairFixture(fixtureId).knownPatch;
+  return createPatchHarness(fixtureId, source);
 }
 
 /** A harness that inspects the project but changes nothing. */
-export function noChangeHarness(): FixtureHarness {
+export function noChangeHarness(
+  fixtureId: RepairFixtureId = DEFAULT_FIXTURE_ID,
+): FixtureHarness {
+  const modulePath = modulePathFor(fixtureId);
   return {
-    repair: () => Promise.resolve({ trajectory: [`read ${MODULE_PATH}`] }),
+    repair: () => Promise.resolve({ trajectory: [`read ${modulePath}`] }),
   };
+}
+
+function modulePathFor(fixtureId: RepairFixtureId): string {
+  return fixtureId === DEFAULT_FIXTURE_ID
+    ? MODULE_PATH
+    : repairFixture(fixtureId).modulePath;
 }

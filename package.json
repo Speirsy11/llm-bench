@@ -23,6 +23,7 @@
     "test": "turbo run test",
     "test:coverage": "turbo run test:coverage",
     "test:e2e": "playwright test",
+    "test:fixtures": "pnpm --filter @llm-bench/repository-repair test",
     "test:integration": "turbo run test:integration",
     "test:runner-contract": "turbo run test --filter=@speirsy11/llm-bench-runner --filter=@llm-bench/codex-harness --filter=@llm-bench/claude-harness --filter=@llm-bench/pi-harness",
     "test:watch": "turbo run test:watch",

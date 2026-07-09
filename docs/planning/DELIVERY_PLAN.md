@@ -13,7 +13,7 @@ The product contract is in [`PRODUCT_PLAN.md`](PRODUCT_PLAN.md). Each epic below
 | [x]  | [EPIC-05](epics/EPIC-05-runner-protocol.md)            | Paired runner and durable jobs                    | EPIC-03, EPIC-04                            | `complete`    |
 | [x]  | [EPIC-06](epics/EPIC-06-sealed-credentials-harness.md) | Sealed credentials and LLMBench harness           | EPIC-05                                     | `complete`    |
 | [x]  | [EPIC-07](epics/EPIC-07-dashboard-tracer.md)           | Dashboard experiment tracer                       | EPIC-05, EPIC-06                            | `complete`    |
-| [ ]  | [EPIC-08](epics/EPIC-08-repair-corpus.md)              | TypeScript and Python repair corpus               | EPIC-03                                     | `not_started` |
+| [ ]  | [EPIC-08](epics/EPIC-08-repair-corpus.md)              | TypeScript and Python repair corpus               | EPIC-03                                     | `in_review`   |
 | [x]  | [EPIC-09](epics/EPIC-09-codex-harness.md)              | Process harness base and Codex                    | EPIC-05                                     | `complete`    |
 | [ ]  | [EPIC-10](epics/EPIC-10-claude-pi-harnesses.md)        | Claude Code and Pi harnesses                      | EPIC-09                                     | `in_review`  |
 | [ ]  | [EPIC-11](epics/EPIC-11-tools-mcp-plugins.md)          | Toolsets, MCP, and plugin SDK                     | EPIC-06, EPIC-09, EPIC-10                   | `not_started` |
