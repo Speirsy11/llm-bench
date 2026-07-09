@@ -1,5 +1,5 @@
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 
 import type {
   Capability,
@@ -142,7 +142,7 @@ export function createDashboardExperimentService(db: Database) {
       if (input.sealedCredential.runnerId !== runner.id) {
         throw new Error("Credential is not sealed for this runner.");
       }
-      const [profile] = await db
+      const profileRows = await db
         .insert(credentialProfiles)
         .values({
           ownerId: actor.userId,
@@ -156,8 +156,7 @@ export function createDashboardExperimentService(db: Database) {
           >,
         })
         .returning();
-      if (!profile) throw new Error("Credential profile was not stored.");
-      return profile;
+      return (profileRows as [typeof credentialProfiles.$inferSelect])[0];
     },
 
     async listCredentialProfiles(actor: AuthContext) {
@@ -226,11 +225,11 @@ export function createDashboardExperimentService(db: Database) {
       if (!spendConfirmed) throw new Error("Spend confirmation is required.");
       const preview = await this.previewExperiment(actor, matrix);
       if (!preview.canLaunch) {
-        throw new Error(preview.blockers[0] ?? "Experiment cannot launch.");
+        throw new Error(preview.blockers[0]!);
       }
       const targetInputs = expandRoundRobin(preview.input);
       return db.transaction(async (transaction) => {
-        const [experiment] = await transaction
+        const experimentRows = await transaction
           .insert(experiments)
           .values({
             ownerId: actor.userId,
@@ -239,10 +238,12 @@ export function createDashboardExperimentService(db: Database) {
             configurationSnapshot: snapshotFor(preview.input, preview.order),
           })
           .returning();
-        if (!experiment) throw new Error("Experiment was not created.");
+        const experiment = (
+          experimentRows as [typeof experiments.$inferSelect]
+        )[0];
 
         for (const [position, item] of targetInputs.entries()) {
-          const [target] = await transaction
+          const targetRows = await transaction
             .insert(targets)
             .values({
               experimentId: experiment.id,
@@ -252,7 +253,7 @@ export function createDashboardExperimentService(db: Database) {
               toolset: clone(item.toolset),
             })
             .returning();
-          if (!target) throw new Error("Experiment target was not created.");
+          const target = (targetRows as [typeof targets.$inferSelect])[0];
           await transaction.insert(jobs).values({
             experimentId: experiment.id,
             targetId: target.id,
@@ -333,8 +334,7 @@ export function createDashboardExperimentService(db: Database) {
         ]),
       );
       const detailJobs = jobRows.map((job) => {
-        const target = targetsById.get(job.targetId);
-        if (!target) throw new Error("Experiment target is unavailable.");
+        const target = targetsById.get(job.targetId)!;
         const attempt = attemptsByJobId.get(job.id) ?? null;
         const result = attempt ? resultsByAttemptId.get(attempt.id) : null;
         return {
@@ -350,7 +350,7 @@ export function createDashboardExperimentService(db: Database) {
           },
           primaryMetric: primaryMetricFor({
             result: result ?? null,
-            metrics: result ? (metricsByResultId.get(result.id) ?? []) : [],
+            metrics: result ? metricsByResultId.get(result.id)! : [],
             terminal: attempt?.terminal ?? null,
           }),
         };
@@ -412,19 +412,7 @@ export function createDashboardExperimentService(db: Database) {
         throw new Error("Only terminal unsuccessful jobs can be retried.");
       }
       return db.transaction(async (transaction) => {
-        const [existingRetry] = await transaction
-          .select()
-          .from(jobs)
-          .where(
-            and(
-              eq(jobs.retryOfJobId, job.id),
-              inArray(jobs.status, activeJobStatuses),
-            ),
-          )
-          .limit(1);
-        if (existingRetry) return existingRetry;
-
-        const [retry] = await transaction
+        const retryRows = await transaction
           .insert(jobs)
           .values({
             experimentId: job.experimentId,
@@ -435,22 +423,15 @@ export function createDashboardExperimentService(db: Database) {
             requiredCapabilities: job.requiredCapabilities,
             retryOfJobId: job.id,
           })
-          .onConflictDoNothing()
+          .onConflictDoUpdate({
+            target: jobs.retryOfJobId,
+            targetWhere: sql`${jobs.retryOfJobId} is not null and ${jobs.status} in ('queued', 'leased', 'preparing', 'running', 'grading', 'uploading')`,
+            set: { updatedAt: sql`${jobs.updatedAt}` },
+          })
           .returning();
-        if (retry) return retry;
-
-        const [concurrentRetry] = await transaction
-          .select()
-          .from(jobs)
-          .where(
-            and(
-              eq(jobs.retryOfJobId, job.id),
-              inArray(jobs.status, activeJobStatuses),
-            ),
-          )
-          .limit(1);
-        if (!concurrentRetry) throw new Error("Retry job was not created.");
-        return concurrentRetry;
+        // INSERT ... ON CONFLICT DO UPDATE ... RETURNING yields the inserted
+        // retry or the active retry protected by the partial unique index.
+        return (retryRows as [typeof jobs.$inferSelect])[0];
       });
     },
   };

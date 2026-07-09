@@ -14,6 +14,7 @@ import {
 } from "./index";
 import {
   attempts as attemptRows,
+  experiments as experimentRows,
   metrics as metricRows,
   results as resultRows,
   runners as runnerRows,
@@ -56,6 +57,86 @@ describe("dashboard experiment orchestration", () => {
         },
       },
     );
+    await expect(
+      controlPlane.dashboard.saveCredentialProfile(actor, {
+        label: "Wrong runner",
+        provider: "openrouter",
+        runnerId: runner.id,
+        maskedSecret: "sk-or-v1...wrong",
+        sealedCredential: {
+          algorithm: "x25519-xsalsa20-poly1305-sealed-box",
+          runnerId: randomUUID(),
+          keyFingerprint: "fingerprint-wrong",
+          ciphertext: "sealed-ciphertext-wrong",
+        },
+      }),
+    ).rejects.toThrow("Credential is not sealed for this runner.");
+    await expect(
+      controlPlane.dashboard.listCredentialProfiles(actor),
+    ).resolves.toHaveLength(1);
+    const listedRunners = await controlPlane.dashboard.listRunners(actor);
+    expect(listedRunners).toMatchObject([
+      { id: runner.id, ownerId: actor.userId, status: "online" },
+    ]);
+    expect(listedRunners[0]).not.toHaveProperty("tokenHash");
+    await expect(
+      controlPlane.dashboard.previewExperiment(actor, {
+        name: "Missing runner",
+        runnerId: randomUUID(),
+        credentialProfileId: credential.id,
+        modelRoutes: [],
+        harnesses: [],
+        toolsets: [],
+      }),
+    ).rejects.toThrow("Runner is unavailable.");
+    await expect(
+      controlPlane.dashboard.previewExperiment(actor, {
+        name: "Missing credential",
+        runnerId: runner.id,
+        credentialProfileId: randomUUID(),
+        modelRoutes: [],
+        harnesses: [],
+        toolsets: [],
+      }),
+    ).rejects.toThrow("Credential profile is unavailable.");
+
+    const secondRunner = await pairRunnerForActor(actor, "matrix-owner-second");
+    await heartbeatRunner(secondRunner);
+    await expect(
+      controlPlane.dashboard.previewExperiment(actor, {
+        name: "Credential mismatch",
+        runnerId: secondRunner.id,
+        credentialProfileId: credential.id,
+        modelRoutes: [],
+        harnesses: [],
+        toolsets: [],
+      }),
+    ).rejects.toThrow("Credential profile is not sealed for this runner.");
+
+    await database.db
+      .update(runnerRows)
+      .set({ status: "disabled" })
+      .where(eq(runnerRows.id, runner.id));
+    await expect(
+      controlPlane.dashboard.previewExperiment(actor, {
+        name: " ",
+        runnerId: runner.id,
+        credentialProfileId: credential.id,
+        modelRoutes: [],
+        harnesses: [],
+        toolsets: [],
+      }),
+    ).resolves.toMatchObject({
+      canLaunch: false,
+      blockers: [
+        "Experiment name is required.",
+        "At least one model route is required.",
+        "At least one harness is required.",
+        "At least one toolset is required.",
+        "Runner is disabled.",
+      ],
+    });
+    await heartbeatRunner(runner);
 
     const preview = await controlPlane.dashboard.previewExperiment(actor, {
       name: "Fixture repair comparison",
@@ -241,6 +322,13 @@ describe("dashboard experiment orchestration", () => {
         { primaryMetric: null },
       ],
     });
+
+    await database.db
+      .insert(experimentRows)
+      .values({ ownerId: actor.userId, name: "Empty matrix shell" });
+    await expect(
+      controlPlane.dashboard.listExperiments(actor),
+    ).resolves.toHaveLength(2);
   });
 
   it("rejects offline and incompatible launches before enqueueing paid work", async () => {
@@ -413,6 +501,9 @@ describe("dashboard experiment orchestration", () => {
     await expect(
       controlPlane.dashboard.cancelJob(otherActor, jobId),
     ).rejects.toThrow("Job is unavailable.");
+    await expect(controlPlane.dashboard.retryJob(actor, jobId)).rejects.toThrow(
+      "Only terminal unsuccessful jobs can be retried.",
+    );
 
     await controlPlane.dashboard.cancelJob(actor, jobId);
     const jobService = createRunnerJobService({
@@ -452,14 +543,22 @@ async function pairedOfflineRunner(login: string) {
     name: login,
   });
   const actor = { userId: user.id, githubLogin: login, isAdmin: false };
+  const runner = await pairRunnerForActor(actor, login);
+  return { actor, runner };
+}
+
+async function pairRunnerForActor(
+  actor: { userId: string; githubLogin: string; isAdmin: boolean },
+  name: string,
+) {
   const protocol = createRunnerProtocolService({
     store: new PostgresRunnerProtocolStore(database.db),
     randomToken: () => randomUUID(),
   });
   const pairing = await protocol.startPairing({
     protocolVersion: "1.0",
-    name: `${login} runner`,
-    publicKey: `${login}-public-key`,
+    name: `${name} runner`,
+    publicKey: `${name}-public-key`,
     capabilities: ["workspaces", "files"],
     environment: {
       os: "linux",
@@ -476,7 +575,7 @@ async function pairedOfflineRunner(login: string) {
   const approved = await protocol.pollPairing(pairing.deviceCode);
   if (approved.status !== "approved") throw new Error("Expected approval.");
   const runner = await protocol.authenticate(approved.token);
-  return { actor, runner };
+  return runner;
 }
 
 async function heartbeatRunner(

@@ -449,8 +449,7 @@ async function persistTerminalResult(
         .from(results)
         .where(eq(results.attemptId, attemptId))
         .limit(1)
-    )[0];
-  if (!result) throw new Error("Result was not stored.");
+    )[0]!;
   for (const observation of terminal.observations) {
     const definition = metricDefinitionForId(observation.metricId);
     await transaction
