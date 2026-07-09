@@ -1,30 +1,49 @@
 # @llm-bench/repository-repair
 
-The v1 TypeScript repository-repair fixture and its deterministic harnesses,
-run through [`@llm-bench/runner-engine`](../runner-engine). This is the primary
-agentic benchmark's first task: a deliberately broken `clamp` function the
-harness must fix.
+The deterministic repository-repair benchmark corpus, run through
+[`@llm-bench/runner-engine`](../runner-engine). The corpus contains six small,
+offline repair fixtures: three TypeScript tasks and three Python tasks.
 
-## What it provides
+## Fixtures
 
-- **`repairScenario()`** — a runnable `RepairScenario`: the `ClampRepairBenchmark`
-  manifest, the agentic task, a `prepare` that writes the broken project plus a
-  visible specification, and the hidden behavioural tests.
-- **`knownPatchHarness()`** — the canonical harness applying the known good patch.
-- **`createPatchHarness(source)`** — a harness that writes arbitrary source over
-  the module under repair (used to model incomplete patches).
-- **`noChangeHarness()`** — a harness that inspects but changes nothing.
-- Source constants: `BROKEN_SOURCE`, `KNOWN_PATCH`, `PARTIAL_PATCH`.
+| Fixture                    | Language   | Failure shape                              |
+| -------------------------- | ---------- | ------------------------------------------ |
+| `typescript-clamp-bounds`  | TypeScript | Boundary logic                             |
+| `typescript-async-cache`   | TypeScript | Async control flow and in-flight caching   |
+| `typescript-state-reducer` | TypeScript | State mutation                             |
+| `python-parse-duration`    | Python     | Parsing and unit conversion                |
+| `python-api-boundary`      | Python     | DTO sanitization across an API boundary    |
+| `python-resource-cleanup`  | Python     | File-handle cleanup on success and failure |
 
-## Hidden grading is real
+Every fixture includes broken source, a known-good patch, a plausible incomplete
+patch, visible instructions, hidden graders, runtime requirements, a fixture
+content hash, and a grader hash. Hidden graders are not written into the
+workspace during execution.
 
-The hidden tests are withheld until grading and then **execute the repaired
-module directly** with Node's native module loader. The pass ratio therefore
-reflects actual behaviour, not a harness self-report:
+## Public API
 
-- the broken fixture passes only the in-range case (1/3);
-- the known patch passes every case (3/3);
-- the incomplete patch that clamps the lower bound only is detected (2/3).
+- `repairFixtures()` returns the deterministic fixture catalog.
+- `repairFixture(id)` returns one public fixture manifest.
+- `repairScenario(id?)` returns a runnable `RepairScenario`; omitting `id` keeps
+  the original clamp fixture as the compatibility default.
+- `knownPatchHarness(id?)` applies the known-good patch for a fixture.
+- `createPatchHarness(id, source)` writes arbitrary source over a fixture module.
+  `createPatchHarness(source)` remains supported for the default clamp fixture.
+- `noChangeHarness(id?)` inspects a fixture without repairing it.
+- `repairCorpusSample(id, grade)` stamps a result sample with fixture and grader
+  hashes.
+- `summarizeRepairCorpus(samples)` emits overall and per-language pass ratios
+  plus raw sample counts.
+
+## Hidden grading
+
+Hidden tests execute repaired modules directly. TypeScript fixtures load local
+CommonJS modules with Node. Python fixtures run `python3` (or `LLMBENCH_PYTHON`)
+with the workspace on `PYTHONPATH`. The corpus is network independent.
+
+The pass ratio reflects actual behavior, not a harness self-report. Known
+patches pass every hidden test. Plausible incomplete patches are detected by at
+least one hidden grader per fixture.
 
 ## Example
 
@@ -41,13 +60,13 @@ import {
 
 const result = await executeAgenticTask({
   jobId,
-  scenario: repairScenario(),
-  harness: knownPatchHarness(),
+  scenario: repairScenario("python-resource-cleanup"),
+  harness: knownPatchHarness("python-resource-cleanup"),
   limits,
   workspaceRoot,
   artifactStore: new FileArtifactStore(artifactDir),
   eventSpool: new JsonlEventSpool(spoolPath),
 });
 
-result.grade?.ratio; // 1 — every hidden test passes
+result.grade?.ratio; // 1
 ```
