@@ -6,7 +6,7 @@ depends_on:
   - EPIC-09
 owner: Codex
 branch: codex/epic-10-claude-pi
-pull_request:
+pull_request: https://github.com/Speirsy11/llm-bench/pull/11
 last_updated: 2026-07-09
 ---
 
