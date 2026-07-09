@@ -441,15 +441,18 @@ async function persistTerminalResult(
     })
     .onConflictDoNothing({ target: results.attemptId })
     .returning();
-  const result =
-    insertedResult ??
-    (
-      await transaction
-        .select()
-        .from(results)
-        .where(eq(results.attemptId, attemptId))
-        .limit(1)
-    )[0]!;
+  let result = insertedResult;
+  if (result === undefined) {
+    const [existingResult] = await transaction
+      .select()
+      .from(results)
+      .where(eq(results.attemptId, attemptId))
+      .limit(1);
+    if (existingResult === undefined) {
+      throw new Error("Completed job result was not persisted.");
+    }
+    result = existingResult;
+  }
   for (const observation of terminal.observations) {
     const definition = metricDefinitionForId(observation.metricId);
     await transaction

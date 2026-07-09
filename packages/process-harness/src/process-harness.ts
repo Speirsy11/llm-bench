@@ -17,6 +17,10 @@ export interface JsonlProcessHarnessOptions {
   redact?: readonly string[];
 }
 
+export interface ProcessHarnessRunOptions extends JsonlProcessHarnessOptions {
+  stdin: string;
+}
+
 /**
  * Reusable process-harness boundary: a clean environment, bounded process
  * output, prompt delivery over stdin, cancellation, and JSONL event parsing.
@@ -33,22 +37,9 @@ export abstract class JsonlProcessHarnessAdapter<
 
   override async run(request: AdapterRunRequest): Promise<AdapterRunResult> {
     const command = this.command(request);
-    const executable = command[0];
-    if (executable === undefined) throw new Error("Process command is empty.");
-    const deadline = AbortSignal.timeout(request.limits.maxDurationMs);
-    const signal = request.signal
-      ? AbortSignal.any([request.signal, deadline])
-      : deadline;
-    const processResult = await (
-      this.processOptions.runner ?? new NodeProcessRunner()
-    ).run({
-      argv: [executable, ...command.slice(1)],
-      cwd: request.workspaceRoot,
-      env: cleanProcessEnvironment(process.env, this.processOptions.env),
+    const processResult = await runProcessHarnessCommand(request, command, {
+      ...this.processOptions,
       stdin: request.prompt,
-      signal,
-      maxOutputBytes: this.processOptions.maxOutputBytes ?? 10 * 1024 * 1024,
-      redact: this.processOptions.redact,
     });
     const events = processResult.stdoutLines.map((line, index) => {
       try {
@@ -69,4 +60,26 @@ export abstract class JsonlProcessHarnessAdapter<
     events: NativeEvent[],
     process: ProcessRunResult,
   ): AdapterRunResult;
+}
+
+export async function runProcessHarnessCommand(
+  request: AdapterRunRequest,
+  command: readonly string[],
+  options: ProcessHarnessRunOptions,
+): Promise<ProcessRunResult> {
+  const executable = command[0];
+  if (executable === undefined) throw new Error("Process command is empty.");
+  const deadline = AbortSignal.timeout(request.limits.maxDurationMs);
+  const signal = request.signal
+    ? AbortSignal.any([request.signal, deadline])
+    : deadline;
+  return (options.runner ?? new NodeProcessRunner()).run({
+    argv: [executable, ...command.slice(1)],
+    cwd: request.workspaceRoot,
+    env: cleanProcessEnvironment(process.env, options.env),
+    stdin: options.stdin,
+    signal,
+    maxOutputBytes: options.maxOutputBytes ?? 10 * 1024 * 1024,
+    redact: options.redact,
+  });
 }

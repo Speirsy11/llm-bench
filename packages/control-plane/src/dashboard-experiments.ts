@@ -28,15 +28,6 @@ import {
 
 type Database = PostgresJsDatabase<typeof schemaType>;
 
-const activeJobStatuses = [
-  "queued",
-  "leased",
-  "preparing",
-  "running",
-  "grading",
-  "uploading",
-] as const;
-
 const terminalRetryableStatuses = [
   "failed",
   "cancelled",
@@ -225,7 +216,9 @@ export function createDashboardExperimentService(db: Database) {
       if (!spendConfirmed) throw new Error("Spend confirmation is required.");
       const preview = await this.previewExperiment(actor, matrix);
       if (!preview.canLaunch) {
-        throw new Error(preview.blockers[0]!);
+        throw new Error(
+          preview.blockers[0] ?? "Experiment cannot be launched.",
+        );
       }
       const targetInputs = expandRoundRobin(preview.input);
       return db.transaction(async (transaction) => {
@@ -334,7 +327,10 @@ export function createDashboardExperimentService(db: Database) {
         ]),
       );
       const detailJobs = jobRows.map((job) => {
-        const target = targetsById.get(job.targetId)!;
+        const target = targetsById.get(job.targetId);
+        if (target === undefined) {
+          throw new Error(`Experiment target not found for job ${job.id}.`);
+        }
         const attempt = attemptsByJobId.get(job.id) ?? null;
         const result = attempt ? resultsByAttemptId.get(attempt.id) : null;
         return {
@@ -350,7 +346,11 @@ export function createDashboardExperimentService(db: Database) {
           },
           primaryMetric: primaryMetricFor({
             result: result ?? null,
-            metrics: result ? metricsByResultId.get(result.id)! : [],
+            metrics: result
+              ? (metricsByResultId.get(
+                  result.id,
+                ) as (typeof metrics.$inferSelect)[])
+              : [],
             terminal: attempt?.terminal ?? null,
           }),
         };
