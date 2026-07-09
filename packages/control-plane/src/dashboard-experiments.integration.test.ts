@@ -16,6 +16,7 @@ import {
   attempts as attemptRows,
   metrics as metricRows,
   results as resultRows,
+  runners as runnerRows,
 } from "./schema";
 
 const connectionString = process.env.TEST_DATABASE_URL;
@@ -320,6 +321,30 @@ describe("dashboard experiment orchestration", () => {
         spendConfirmed: true,
       }),
     ).rejects.toThrow("limited is missing files.");
+
+    await database.db
+      .update(runnerRows)
+      .set({ capabilities: ["workspaces"] })
+      .where(eq(runnerRows.id, runner.id));
+    const runnerAndRouteBlockers =
+      await controlPlane.dashboard.previewExperiment(actor, {
+        ...input,
+        harnesses: [
+          {
+            id: "mismatched",
+            version: "1.0.0",
+            capabilities: ["workspaces", "files"],
+            modelRoutes: [],
+          },
+        ],
+      });
+    expect(runnerAndRouteBlockers).toMatchObject({
+      canLaunch: false,
+      blockers: [
+        "Runner is missing files.",
+        "mismatched cannot use openrouter-gpt-4o.",
+      ],
+    });
   });
 
   it("keeps cancellation, retry, and private ownership auditable", async () => {

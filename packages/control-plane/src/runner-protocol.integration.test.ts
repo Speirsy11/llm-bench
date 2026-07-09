@@ -243,6 +243,32 @@ describe("durable runner protocol", () => {
       .from(artifacts)
       .where(eq(artifacts.resultId, resultRows[0]?.id ?? randomUUID()));
     expect(artifactRows).toHaveLength(1);
+
+    await jobService.enqueue({
+      ownerId,
+      experimentId: experiment.id,
+      targetId: target.id,
+      benchmark: { id: "repository-repair", version: "1.0.0" },
+      requiredCapabilities: ["workspaces", "files"],
+    });
+    const emptyFailureLease = await jobService.lease(loser);
+    if (!emptyFailureLease) throw new Error("Expected empty failure lease.");
+    await jobService.complete(loser, {
+      protocolVersion: "1.0",
+      attemptId: emptyFailureLease.attemptId,
+      leaseToken: emptyFailureLease.leaseToken,
+      status: "failed",
+      observations: [],
+      artifacts: [],
+      error: { message: "empty failure" },
+    });
+    await expect(
+      database.db
+        .select()
+        .from(results)
+        .where(eq(results.attemptId, emptyFailureLease.attemptId)),
+    ).resolves.toHaveLength(0);
+
     await expect(
       jobService.saveCheckpoint(winner, {
         attemptId: lease.attemptId,
@@ -321,6 +347,36 @@ describe("durable runner protocol", () => {
     await expect(jobStore.findJob(malformedJobId)).rejects.toThrow(
       "missing benchmark metadata",
     );
+    const malformedCompletionJobId = randomUUID();
+    await database.db.insert(jobRows).values({
+      id: malformedCompletionJobId,
+      experimentId: experiment.id,
+      targetId: target.id,
+      status: "leased",
+    });
+    const malformedCompletionAttemptId = randomUUID();
+    await database.db.insert(attempts).values({
+      id: malformedCompletionAttemptId,
+      jobId: malformedCompletionJobId,
+      number: 1,
+      status: "leased",
+      runnerId: loser.id,
+      leaseTokenHash: "lease-token-hash",
+    });
+    await expect(
+      jobStore.complete(
+        malformedCompletionAttemptId,
+        malformedCompletionJobId,
+        "completed",
+        {
+          attemptId: malformedCompletionAttemptId,
+          status: "completed",
+          observations: [{ metricId: "hidden_test_pass_ratio", value: 1 }],
+          artifacts: [],
+          error: null,
+        },
+      ),
+    ).rejects.toThrow("missing benchmark metadata");
     const malformedAttemptId = randomUUID();
     await database.db.insert(attempts).values({
       id: malformedAttemptId,
