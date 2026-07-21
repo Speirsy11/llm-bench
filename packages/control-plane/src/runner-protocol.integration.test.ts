@@ -1,7 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import type { RunnerExecution } from "@llm-bench/contracts";
+
+import {
+  repositoryRepairLimits,
+  repositoryRepairWorkload,
+} from "./benchmark-registry";
 import {
   createDatabase,
   createRunnerJobService,
@@ -14,9 +20,12 @@ import {
 import {
   artifacts,
   attempts,
+  credentialProfiles,
   experiments,
   jobs as jobRows,
   results,
+  runnerPairings,
+  runners,
   targets,
   users,
 } from "./schema";
@@ -29,6 +38,24 @@ if (!connectionString) {
 }
 
 const database = createDatabase(connectionString);
+
+const execution: RunnerExecution = {
+  workload: repositoryRepairWorkload,
+  target: {
+    modelRoute: { id: "fixture", provider: "codex", model: "fixture/model" },
+    harness: {
+      id: "codex",
+      version: "1.0.0",
+      capabilities: ["workspaces", "files"],
+      modelRoutes: [
+        { id: "fixture", provider: "codex", model: "fixture/model" },
+      ],
+    },
+    toolset: { id: "native", version: "1.0.0", tools: [], mcpProfiles: [] },
+  },
+  limits: repositoryRepairLimits,
+  credential: null,
+};
 
 beforeAll(async () => {
   await resetTestDatabase(connectionString);
@@ -55,20 +82,37 @@ describe("durable runner protocol", () => {
       .values({
         experimentId: experiment.id,
         position: 0,
-        modelRoute: {},
-        harness: {},
-        toolset: {},
+        modelRoute: execution.target.modelRoute,
+        harness: execution.target.harness,
+        toolset: execution.target.toolset,
       })
       .returning();
     if (!target) throw new Error("Expected target.");
 
     const protocolStore = new PostgresRunnerProtocolStore(database.db);
     const protocol = createRunnerProtocolService({ store: protocolStore });
+    const legacyTokenHash = createHash("sha256")
+      .update("legacy-token")
+      .digest("hex");
+    await database.db.insert(runners).values({
+      ownerId,
+      name: "legacy-runner",
+      publicKey: "legacy-der-public-key",
+      protocolVersion: "1.0",
+      tokenHash: legacyTokenHash,
+      status: "online",
+      capabilities: ["workspaces", "files"],
+      environment: {},
+    });
+    await expect(
+      protocolStore.findRunnerByTokenHash(legacyTokenHash),
+    ).resolves.toBeNull();
+
     const pairRunner = async (name: string) => {
       const pairing = await protocol.startPairing({
-        protocolVersion: "1.0",
+        protocolVersion: "2.0",
         name,
-        publicKey: `${name}-key`,
+        publicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
         capabilities: ["workspaces", "files"],
         environment: {
           os: "linux",
@@ -76,7 +120,7 @@ describe("durable runner protocol", () => {
           cpuClass: "fixture",
           memoryMb: 8192,
           runtimeVersions: { node: "22.21.0" },
-          harnessVersions: {},
+          harnessVersions: { codex: "0.142.1" },
           sandboxMode: "process",
           contentHashes: {},
         },
@@ -117,6 +161,7 @@ describe("durable runner protocol", () => {
         ownerId,
         benchmark: { id: "repository-repair", version: "1.0.0" },
         requiredCapabilities: [],
+        execution,
       }),
     ).rejects.toThrow("require an experiment and target");
     await jobService.enqueue({
@@ -125,6 +170,7 @@ describe("durable runner protocol", () => {
       targetId: target.id,
       benchmark: { id: "repository-repair", version: "1.0.0" },
       requiredCapabilities: ["workspaces", "files"],
+      execution,
     });
 
     const leases = await Promise.all([
@@ -142,7 +188,7 @@ describe("durable runner protocol", () => {
     await expect(jobService.lease(winner)).resolves.toBeNull();
     await expect(jobService.lease(loser)).resolves.toBeNull();
     await jobService.recordEvents(winner, {
-      protocolVersion: "1.0",
+      protocolVersion: "2.0",
       attemptId: lease.attemptId,
       leaseToken: lease.leaseToken,
       events: [
@@ -157,7 +203,7 @@ describe("durable runner protocol", () => {
       ],
     });
     await jobService.recordEvents(winner, {
-      protocolVersion: "1.0",
+      protocolVersion: "2.0",
       attemptId: lease.attemptId,
       leaseToken: lease.leaseToken,
       events: [
@@ -181,7 +227,7 @@ describe("durable runner protocol", () => {
       { cancellationRequested: true },
     );
     await jobService.complete(winner, {
-      protocolVersion: "1.0",
+      protocolVersion: "2.0",
       attemptId: lease.attemptId,
       leaseToken: lease.leaseToken,
       status: "completed",
@@ -200,7 +246,7 @@ describe("durable runner protocol", () => {
       error: null,
     });
     await jobService.complete(winner, {
-      protocolVersion: "1.0",
+      protocolVersion: "2.0",
       attemptId: lease.attemptId,
       leaseToken: lease.leaseToken,
       status: "failed",
@@ -250,11 +296,12 @@ describe("durable runner protocol", () => {
       targetId: target.id,
       benchmark: { id: "repository-repair", version: "1.0.0" },
       requiredCapabilities: ["workspaces", "files"],
+      execution,
     });
     const emptyFailureLease = await jobService.lease(loser);
     if (!emptyFailureLease) throw new Error("Expected empty failure lease.");
     await jobService.complete(loser, {
-      protocolVersion: "1.0",
+      protocolVersion: "2.0",
       attemptId: emptyFailureLease.attemptId,
       leaseToken: emptyFailureLease.leaseToken,
       status: "failed",
@@ -303,9 +350,9 @@ describe("durable runner protocol", () => {
     ).resolves.toBeNull();
 
     const pairingForRace = await protocol.startPairing({
-      protocolVersion: "1.0",
+      protocolVersion: "2.0",
       name: "race-runner",
-      publicKey: "race-key",
+      publicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
       capabilities: ["workspaces", "files"],
       environment: first.environment,
     });
@@ -338,21 +385,168 @@ describe("durable runner protocol", () => {
       protocolStore.consumePairing(claimedPairing, raceRunner, consumedAt),
     ).resolves.toBe(false);
 
+    const missingMetadataJobId = randomUUID();
+    await database.db.insert(jobRows).values({
+      id: missingMetadataJobId,
+      experimentId: experiment.id,
+      targetId: target.id,
+      execution,
+      workload: repositoryRepairWorkload,
+      limits: repositoryRepairLimits,
+    });
+    await expect(jobStore.findJob(missingMetadataJobId)).rejects.toThrow(
+      "missing benchmark metadata",
+    );
+    const incompatibleJobId = randomUUID();
+    await database.db.insert(jobRows).values({
+      id: incompatibleJobId,
+      experimentId: experiment.id,
+      targetId: target.id,
+      benchmarkId: "repository-repair",
+      benchmarkVersion: "1.0.0",
+      execution: {
+        ...execution,
+        target: {
+          ...execution.target,
+          harness: { ...execution.target.harness, modelRoutes: [] },
+        },
+      },
+      workload: repositoryRepairWorkload,
+      limits: repositoryRepairLimits,
+    });
     const malformedJobId = randomUUID();
     await database.db.insert(jobRows).values({
       id: malformedJobId,
       experimentId: experiment.id,
       targetId: target.id,
+      benchmarkId: "repository-repair",
+      benchmarkVersion: "1.0.0",
+      execution: { malformed: true } as unknown as RunnerExecution,
+      workload: repositoryRepairWorkload,
+      limits: repositoryRepairLimits,
     });
     await expect(jobStore.findJob(malformedJobId)).rejects.toThrow(
-      "missing benchmark metadata",
+      "Invalid input",
     );
+    await jobService.enqueue({
+      ownerId,
+      experimentId: experiment.id,
+      targetId: target.id,
+      benchmark: { id: "repository-repair", version: "1.0.0" },
+      requiredCapabilities: ["workspaces", "files"],
+      execution,
+    });
+    const leaseAfterMalformed = await jobService.lease(loser);
+    expect(leaseAfterMalformed?.execution).toEqual(execution);
+    await expect(
+      database.db
+        .select({ status: jobRows.status })
+        .from(jobRows)
+        .where(
+          inArray(jobRows.id, [
+            missingMetadataJobId,
+            incompatibleJobId,
+            malformedJobId,
+          ]),
+        )
+        .orderBy(jobRows.queuePosition),
+    ).resolves.toEqual([
+      { status: "failed" },
+      { status: "failed" },
+      { status: "failed" },
+    ]);
+    if (!leaseAfterMalformed) throw new Error("Expected valid job lease.");
+    await jobService.complete(loser, {
+      protocolVersion: "2.0",
+      attemptId: leaseAfterMalformed.attemptId,
+      leaseToken: leaseAfterMalformed.leaseToken,
+      status: "failed",
+      observations: [],
+      artifacts: [],
+      error: { kind: "fixture" },
+    });
+
+    const llmExecution = (runnerId: string, provider = "openrouter") => ({
+      ...execution,
+      target: {
+        modelRoute: {
+          id: "openrouter-fixture",
+          provider: "openrouter",
+          model: "fixture/model",
+        },
+        harness: {
+          id: "llmbench",
+          version: "1.0.0",
+          capabilities: [],
+          modelRoutes: [
+            {
+              id: "openrouter-fixture",
+              provider: "openrouter",
+              model: "fixture/model",
+            },
+          ],
+        },
+        toolset: {
+          id: "builtin",
+          version: "1.0.0",
+          tools: ["read_file", "list_directory", "search_files", "apply_patch"],
+          mcpProfiles: [],
+        },
+      },
+      credential: {
+        profileId: randomUUID(),
+        provider,
+        sealed: {
+          algorithm: "x25519-xsalsa20poly1305-seal" as const,
+          runnerId,
+          keyFingerprint: "AAAAAAAAAAAAAAAAAAAAAA==",
+          ciphertext: "A".repeat(68),
+        },
+      },
+    });
+    const wrongRunnerJobId = randomUUID();
+    const wrongProviderJobId = randomUUID();
+    for (const [id, snapshot] of [
+      [wrongRunnerJobId, llmExecution(winner.id)],
+      [wrongProviderJobId, llmExecution(loser.id, "other-provider")],
+    ] as const) {
+      await database.db.insert(jobRows).values({
+        id,
+        experimentId: experiment.id,
+        targetId: target.id,
+        benchmarkId: "repository-repair",
+        benchmarkVersion: "1.0.0",
+        execution: snapshot,
+        workload: snapshot.workload,
+        limits: snapshot.limits,
+      });
+    }
+    await jobService.enqueue({
+      ownerId,
+      experimentId: experiment.id,
+      targetId: target.id,
+      benchmark: { id: "repository-repair", version: "1.0.0" },
+      requiredCapabilities: [],
+      execution,
+    });
+    const leaseAfterMismatches = await jobService.lease(loser);
+    expect(leaseAfterMismatches?.execution).toEqual(execution);
+    await expect(
+      database.db
+        .select({ status: jobRows.status })
+        .from(jobRows)
+        .where(inArray(jobRows.id, [wrongRunnerJobId, wrongProviderJobId]))
+        .orderBy(jobRows.queuePosition),
+    ).resolves.toEqual([{ status: "queued" }, { status: "queued" }]);
     const malformedCompletionJobId = randomUUID();
     await database.db.insert(jobRows).values({
       id: malformedCompletionJobId,
       experimentId: experiment.id,
       targetId: target.id,
       status: "leased",
+      execution,
+      workload: repositoryRepairWorkload,
+      limits: repositoryRepairLimits,
     });
     const malformedCompletionAttemptId = randomUUID();
     await database.db.insert(attempts).values({
@@ -386,6 +580,179 @@ describe("durable runner protocol", () => {
     await expect(jobStore.findAttempt(malformedAttemptId)).rejects.toThrow(
       "missing lease metadata",
     );
+
+    const malformedPairingHash = hashSecret("malformed-v1-pairing");
+    await database.db.insert(runnerPairings).values({
+      deviceCodeHash: malformedPairingHash,
+      userCodeHash: hashSecret("MALFORMED"),
+      request: {
+        protocolVersion: "2.0",
+        name: "legacy-key-shape",
+        publicKey: "legacy-der-public-key",
+        capabilities: [],
+        environment: {},
+      },
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    await expect(
+      protocolStore.findPairingByDeviceHash(malformedPairingHash),
+    ).rejects.toThrow("Expected canonical raw 32-byte X25519 key material.");
+    const legacyPairingHash = hashSecret("persisted-v1-pairing");
+    await database.db.insert(runnerPairings).values({
+      deviceCodeHash: legacyPairingHash,
+      userCodeHash: hashSecret("LEGACY"),
+      request: {
+        protocolVersion: "1.0",
+        name: "legacy-pairing",
+        publicKey: "legacy-der-public-key",
+        capabilities: [],
+        environment: {},
+      },
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    await expect(
+      protocolStore.findPairingByDeviceHash(legacyPairingHash),
+    ).resolves.toBeNull();
+  }, 120_000);
+
+  it("does not lease credentials to a runner revoked after authentication", async () => {
+    const ownerId = randomUUID();
+    const runnerId = randomUUID();
+    const token = "runner-token-before-revocation";
+    const tokenHash = hashSecret(token);
+    const sealedCredential = {
+      algorithm: "x25519-xsalsa20poly1305-seal" as const,
+      runnerId,
+      keyFingerprint: "AAAAAAAAAAAAAAAAAAAAAA==",
+      ciphertext: "A".repeat(68),
+    };
+    const llmExecution: RunnerExecution = {
+      workload: repositoryRepairWorkload,
+      target: {
+        modelRoute: {
+          id: "openrouter-race",
+          provider: "openrouter",
+          model: "fixture/model",
+        },
+        harness: {
+          id: "llmbench",
+          version: "1.0.0",
+          capabilities: ["response_generation", "workspaces", "files"],
+          modelRoutes: [
+            {
+              id: "openrouter-race",
+              provider: "openrouter",
+              model: "fixture/model",
+            },
+          ],
+        },
+        toolset: {
+          id: "builtin",
+          version: "1.0.0",
+          tools: ["read_file", "list_directory", "search_files", "apply_patch"],
+          mcpProfiles: [],
+        },
+      },
+      limits: repositoryRepairLimits,
+      credential: {
+        profileId: randomUUID(),
+        provider: "openrouter",
+        sealed: sealedCredential,
+      },
+    };
+
+    await database.db.insert(users).values({
+      id: ownerId,
+      githubId: `revocation-${ownerId}`,
+      githubLogin: `revocation-${ownerId}`,
+    });
+    await database.db.insert(runners).values({
+      id: runnerId,
+      ownerId,
+      name: "revoked-claim-runner",
+      publicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      protocolVersion: "2.0",
+      tokenHash,
+      status: "online",
+      capabilities: ["response_generation", "workspaces", "files"],
+      environment: {
+        os: "linux",
+        architecture: "x64",
+        cpuClass: "fixture",
+        memoryMb: 4096,
+        runtimeVersions: { node: "22.21.0" },
+        harnessVersions: { llmbench: "1.0.0" },
+        sandboxMode: "process",
+        contentHashes: {},
+      },
+    });
+    const [experiment] = await database.db
+      .insert(experiments)
+      .values({ ownerId, name: "Revoked runner claim" })
+      .returning();
+    if (!experiment) throw new Error("Expected experiment.");
+    const [target] = await database.db
+      .insert(targets)
+      .values({
+        experimentId: experiment.id,
+        position: 0,
+        modelRoute: llmExecution.target.modelRoute,
+        harness: llmExecution.target.harness,
+        toolset: llmExecution.target.toolset,
+      })
+      .returning();
+    if (!target) throw new Error("Expected target.");
+    await database.db.insert(credentialProfiles).values({
+      id: llmExecution.credential?.profileId,
+      ownerId,
+      runnerId,
+      label: "Revocation race credential",
+      provider: "openrouter",
+      maskedSecret: "••••race",
+      sealedCredential,
+    });
+    const [job] = await database.db
+      .insert(jobRows)
+      .values({
+        experimentId: experiment.id,
+        targetId: target.id,
+        credentialProfileId: llmExecution.credential?.profileId,
+        runnerId,
+        benchmarkId: "repository-repair",
+        benchmarkVersion: "1.0.0",
+        execution: llmExecution,
+        workload: llmExecution.workload,
+        limits: llmExecution.limits,
+        requiredCapabilities: ["response_generation", "workspaces", "files"],
+      })
+      .returning();
+    if (!job) throw new Error("Expected queued job.");
+
+    const protocolStore = new PostgresRunnerProtocolStore(database.db);
+    const protocol = createRunnerProtocolService({ store: protocolStore });
+    const authenticatedRunner = await protocol.authenticate(token);
+    await protocol.revokeAuthenticated(authenticatedRunner);
+
+    const jobStore = new PostgresRunnerJobStore(database.db);
+    await expect(
+      jobStore.claimNext({
+        runner: authenticatedRunner,
+        attemptId: randomUUID(),
+        leaseTokenHash: hashSecret("revoked-lease-token"),
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      database.db
+        .select({ status: jobRows.status })
+        .from(jobRows)
+        .where(eq(jobRows.id, job.id)),
+    ).resolves.toEqual([{ status: "queued" }]);
+    await expect(
+      database.db
+        .select({ id: attempts.id })
+        .from(attempts)
+        .where(eq(attempts.jobId, job.id)),
+    ).resolves.toEqual([]);
   });
 });
 

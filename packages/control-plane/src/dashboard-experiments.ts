@@ -8,13 +8,28 @@ import type {
   MetricKind,
   MetricObservation,
   ModelRoute,
+  RunnerEnvironment,
+  RunnerExecution,
+  SealedCredential,
   Toolset,
+} from "@llm-bench/contracts";
+import {
+  CredentialMaskSchema,
+  LLMBENCH_REPOSITORY_TOOLS,
+  RUNNER_PROTOCOL_VERSION,
+  RunnerExecutionSchema,
+  SealedCredentialSchema,
+  targetCompatibilityBlockers,
 } from "@llm-bench/contracts";
 
 import type { AuthContext } from "./access-policy";
 import type { PairedRunner } from "./runner-protocol";
 import type * as schemaType from "./schema";
-import { repositoryRepairBenchmark } from "./benchmark-registry";
+import {
+  repositoryRepairBenchmark,
+  repositoryRepairLimits,
+  repositoryRepairWorkload,
+} from "./benchmark-registry";
 import {
   attempts,
   credentialProfiles,
@@ -34,25 +49,18 @@ const terminalRetryableStatuses = [
   "interrupted",
 ] as const;
 
-export interface SealedCredentialSnapshot {
-  readonly algorithm: "x25519-xsalsa20-poly1305-sealed-box";
-  readonly runnerId: string;
-  readonly keyFingerprint: string;
-  readonly ciphertext: string;
-}
-
 export interface SaveCredentialProfileInput {
   readonly label: string;
   readonly provider: string;
   readonly runnerId: string;
   readonly maskedSecret: string;
-  readonly sealedCredential: SealedCredentialSnapshot;
+  readonly sealedCredential: SealedCredential;
 }
 
 export interface ExperimentMatrixInput {
   readonly name: string;
   readonly runnerId: string;
-  readonly credentialProfileId: string;
+  readonly credentialProfileId?: string;
   readonly modelRoutes: readonly ModelRoute[];
   readonly harnesses: readonly HarnessManifest[];
   readonly toolsets: readonly Toolset[];
@@ -130,7 +138,16 @@ export function createDashboardExperimentService(db: Database) {
       input: SaveCredentialProfileInput,
     ) {
       const runner = await requireOwnedRunner(db, actor, input.runnerId);
-      if (input.sealedCredential.runnerId !== runner.id) {
+      if (runner.protocolVersion !== RUNNER_PROTOCOL_VERSION) {
+        throw new Error("Runner must be re-paired before saving credentials.");
+      }
+      if (input.provider !== "openrouter") {
+        throw new Error("Credential provider is unsupported.");
+      }
+      const sealedCredential = SealedCredentialSchema.parse(
+        input.sealedCredential,
+      );
+      if (sealedCredential.runnerId !== runner.id) {
         throw new Error("Credential is not sealed for this runner.");
       }
       const profileRows = await db
@@ -140,8 +157,8 @@ export function createDashboardExperimentService(db: Database) {
           runnerId: runner.id,
           label: input.label,
           provider: input.provider,
-          maskedSecret: input.maskedSecret,
-          sealedCredential: clone(input.sealedCredential) as unknown as Record<
+          maskedSecret: CredentialMaskSchema.parse(input.maskedSecret),
+          sealedCredential: clone(sealedCredential) as unknown as Record<
             string,
             unknown
           >,
@@ -170,7 +187,10 @@ export function createDashboardExperimentService(db: Database) {
         capabilities: row.capabilities as Capability[],
         environment: row.environment as PairedRunner["environment"],
         revokedAt: row.revokedAt,
-        status: row.status,
+        status:
+          row.protocolVersion === RUNNER_PROTOCOL_VERSION
+            ? row.status
+            : "disabled",
         lastSeenAt: row.lastSeenAt,
       }));
     },
@@ -181,13 +201,20 @@ export function createDashboardExperimentService(db: Database) {
     ): Promise<ExperimentPreview> {
       const normalized = normalizeMatrixInput(input);
       const runner = await requireOwnedRunner(db, actor, normalized.runnerId);
-      const credential = await requireOwnedCredentialProfile(
-        db,
-        actor,
-        normalized.credentialProfileId,
-      );
-      if (credential.runnerId !== runner.id) {
-        throw new Error("Credential profile is not sealed for this runner.");
+      if (requiresHostedCredential(normalized)) {
+        if (!normalized.credentialProfileId) {
+          throw new Error(
+            "Credential profile is required for LLMBench targets.",
+          );
+        }
+        const credential = await requireOwnedCredentialProfile(
+          db,
+          actor,
+          normalized.credentialProfileId,
+        );
+        if (credential.runnerId !== runner.id) {
+          throw new Error("Credential profile is not sealed for this runner.");
+        }
       }
 
       const order = expandRoundRobin(normalized).map((item, position) => ({
@@ -222,6 +249,14 @@ export function createDashboardExperimentService(db: Database) {
       }
       const targetInputs = expandRoundRobin(preview.input);
       return db.transaction(async (transaction) => {
+        const credential = requiresHostedCredential(preview.input)
+          ? await loadLaunchCredential(
+              transaction as unknown as Database,
+              actor,
+              preview.input.runnerId,
+              preview.input.credentialProfileId,
+            )
+          : null;
         const experimentRows = await transaction
           .insert(experiments)
           .values({
@@ -247,12 +282,17 @@ export function createDashboardExperimentService(db: Database) {
             })
             .returning();
           const target = (targetRows as [typeof targets.$inferSelect])[0];
+          const execution = executionSnapshotFor(item, credential);
           await transaction.insert(jobs).values({
             experimentId: experiment.id,
             targetId: target.id,
             runnerId: preview.input.runnerId,
+            credentialProfileId: execution.credential?.profileId ?? null,
             benchmarkId: repositoryRepairBenchmark.id,
             benchmarkVersion: repositoryRepairBenchmark.version,
+            execution: clone(execution),
+            workload: clone(execution.workload),
+            limits: clone(execution.limits),
             requiredCapabilities: [
               ...repositoryRepairBenchmark.requiredCapabilities,
             ],
@@ -411,6 +451,12 @@ export function createDashboardExperimentService(db: Database) {
       if (!terminalRetryableStatuses.some((status) => status === job.status)) {
         throw new Error("Only terminal unsuccessful jobs can be retried.");
       }
+      if (job.execution === null) {
+        throw new Error(
+          "Legacy jobs without an execution snapshot cannot retry.",
+        );
+      }
+      const execution = RunnerExecutionSchema.parse(job.execution);
       return db.transaction(async (transaction) => {
         const retryRows = await transaction
           .insert(jobs)
@@ -418,8 +464,12 @@ export function createDashboardExperimentService(db: Database) {
             experimentId: job.experimentId,
             targetId: job.targetId,
             runnerId: job.runnerId,
+            credentialProfileId: job.credentialProfileId,
             benchmarkId: job.benchmarkId,
             benchmarkVersion: job.benchmarkVersion,
+            execution: job.execution,
+            workload: execution.workload,
+            limits: execution.limits,
             requiredCapabilities: job.requiredCapabilities,
             retryOfJobId: job.id,
           })
@@ -464,6 +514,26 @@ async function requireOwnedCredentialProfile(
   return credential;
 }
 
+async function loadLaunchCredential(
+  db: Database,
+  actor: AuthContext,
+  runnerId: string,
+  credentialProfileId: string | undefined,
+) {
+  if (!credentialProfileId) {
+    throw new Error("Credential profile is required for LLMBench targets.");
+  }
+  const credential = await requireOwnedCredentialProfile(
+    db,
+    actor,
+    credentialProfileId,
+  );
+  if (credential.runnerId !== runnerId) {
+    throw new Error("Credential profile is not sealed for this runner.");
+  }
+  return credential;
+}
+
 async function requireOwnedJob(
   db: Database,
   actor: AuthContext,
@@ -490,6 +560,33 @@ function normalizeMatrixInput(
     harnesses: input.harnesses.map(clone),
     toolsets: input.toolsets.map(clone),
   };
+}
+
+function requiresHostedCredential(input: ExperimentMatrixInput): boolean {
+  return input.harnesses.some((harness) => harness.id === "llmbench");
+}
+
+function executionSnapshotFor(
+  target: {
+    modelRoute: ModelRoute;
+    harness: HarnessManifest;
+    toolset: Toolset;
+  },
+  credential: typeof credentialProfiles.$inferSelect | null,
+): RunnerExecution {
+  return RunnerExecutionSchema.parse({
+    workload: repositoryRepairWorkload,
+    target,
+    limits: repositoryRepairLimits,
+    credential:
+      target.harness.id === "llmbench" && credential
+        ? {
+            profileId: credential.id,
+            provider: credential.provider,
+            sealed: SealedCredentialSchema.parse(credential.sealedCredential),
+          }
+        : null,
+  });
 }
 
 function expandRoundRobin(input: ExperimentMatrixInput) {
@@ -527,6 +624,9 @@ function blockersFor(
     blockers.push("At least one toolset is required.");
   if (runner.status === "offline") blockers.push("Runner is offline.");
   if (runner.status === "disabled") blockers.push("Runner is disabled.");
+  if (runner.protocolVersion !== RUNNER_PROTOCOL_VERSION) {
+    blockers.push("Runner must be re-paired for the current protocol.");
+  }
   const runnerCapabilities = runner.capabilities as Capability[];
   const runnerMissing = missingCapabilities(
     repositoryRepairBenchmark.requiredCapabilities,
@@ -535,18 +635,14 @@ function blockersFor(
   if (runnerMissing.length > 0) {
     blockers.push(`Runner is missing ${runnerMissing.join(", ")}.`);
   }
-  for (const harness of input.harnesses) {
-    const missing = missingCapabilities(
+  for (const target of expandRoundRobin(input)) {
+    for (const blocker of targetCompatibilityBlockers(
+      target,
       repositoryRepairBenchmark.requiredCapabilities,
-      harness.capabilities,
-    );
-    if (missing.length > 0) {
-      blockers.push(`${harness.id} is missing ${missing.join(", ")}.`);
-    }
-    for (const route of input.modelRoutes) {
-      if (!harness.modelRoutes.some((candidate) => candidate.id === route.id)) {
-        blockers.push(`${harness.id} cannot use ${route.id}.`);
-      }
+      LLMBENCH_REPOSITORY_TOOLS,
+      (runner.environment as RunnerEnvironment).harnessVersions,
+    )) {
+      if (!blockers.includes(blocker)) blockers.push(blocker);
     }
   }
   return blockers;
@@ -570,8 +666,10 @@ function snapshotFor(
       version: repositoryRepairBenchmark.version,
       primaryMetricId: repositoryRepairBenchmark.primaryMetric.id,
     },
+    workload: repositoryRepairWorkload,
+    limits: repositoryRepairLimits,
     runnerId: input.runnerId,
-    credentialProfileId: input.credentialProfileId,
+    credentialProfileId: input.credentialProfileId ?? null,
     modelRoutes: input.modelRoutes,
     harnesses: input.harnesses,
     toolsets: input.toolsets,

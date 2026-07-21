@@ -6,9 +6,9 @@ import {
 } from "./runner-protocol";
 
 const pairingInput = {
-  protocolVersion: "1.0" as const,
+  protocolVersion: "2.0" as const,
   name: "fixture-runner",
-  publicKey: "public-key",
+  publicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
   capabilities: ["workspaces", "files"] as ("workspaces" | "files")[],
   environment: {
     os: "linux" as const,
@@ -188,7 +188,7 @@ describe("runner pairing", () => {
       id: "orphan-runner",
       ownerId: "owner",
       name: "orphan",
-      publicKey: "key",
+      publicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
       capabilities: ["files" as const],
       environment: pairingInput.environment,
       tokenHash: "hash",

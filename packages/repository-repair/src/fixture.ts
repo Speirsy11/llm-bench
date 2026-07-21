@@ -1,7 +1,4 @@
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createRequire } from "node:module";
-import { promisify } from "node:util";
 
 import type {
   AgenticTask,
@@ -9,17 +6,13 @@ import type {
   MetricObservation,
   TaskLanguage,
 } from "@llm-bench/contracts";
-import type {
-  HiddenTest,
-  RepairScenario,
-  Workspace,
-} from "@llm-bench/runner-engine";
+import type { HiddenTest, RepairScenario } from "@llm-bench/runner-engine";
 import { AgenticBenchmark } from "@llm-bench/contracts";
 
 /**
  * Deterministic repository-repair corpus. Each fixture writes a small broken
  * project plus a visible specification, then hidden tests are withheld until
- * grading and execute the repaired module directly.
+ * grading and execute the repaired module in a disposable child process.
  */
 
 export const REPOSITORY_REPAIR_BENCHMARK_VERSION = "1.0.0";
@@ -102,255 +95,151 @@ export const VISIBLE_SPEC = `clamp(value, lower, upper) must return:
 - value otherwise
 `;
 
-type Clamp = (value: number, lower: number, upper: number) => number;
-type LoadOnce = (
-  key: string,
-  loader: (key: string) => Promise<string>,
-  cache?: Map<string, unknown>,
-) => Promise<string>;
-interface Cart {
-  items: { sku: string; quantity: number }[];
-  currency?: string;
-}
-type CartEvent =
-  | { type: "add"; sku: string; quantity: number }
-  | { type: "remove"; sku: string }
-  | { type: "noop" };
-type ReduceCart = (cart: Cart, event: CartEvent) => Cart;
-
-const requireModule = createRequire(import.meta.url);
-const execFileAsync = promisify(execFile);
-
-/**
- * Loads the repaired module to exercise its real behaviour.
- *
- * SECURITY: this runs in-process. That is acceptable here because the only code
- * written into the workspace is this package's own first-party fixture source
- * (see the harnesses in `./harness`) — no model-authored or otherwise untrusted
- * code is executed in this epic, and there are no real model calls yet. When a
- * real harness later produces patches from model output, that code MUST run
- * behind the runner's process/sandbox boundary (EPIC-05+) rather than being
- * required into the engine process.
- */
-async function loadClamp(workspace: Workspace): Promise<Clamp> {
-  const modulePath = await workspace.resolve(MODULE_PATH);
-  const loaded = requireModule(modulePath) as { clamp: Clamp };
-  return loaded.clamp;
+function nodeHiddenTest(id: string, source: string): HiddenTest {
+  return { id, runtime: "node", source };
 }
 
-async function loadAsyncCache(workspace: Workspace): Promise<LoadOnce> {
-  const modulePath = await workspace.resolve("src/cache.cjs");
-  const loaded = requireModule(modulePath) as { loadOnce: LoadOnce };
-  return loaded.loadOnce;
-}
-
-async function loadCartReducer(workspace: Workspace): Promise<ReduceCart> {
-  const modulePath = await workspace.resolve("src/cart.cjs");
-  const loaded = requireModule(modulePath) as { reduceCart: ReduceCart };
-  return loaded.reduceCart;
-}
-
-async function runPython(
-  workspace: Workspace,
-  script: string,
-): Promise<boolean> {
-  const root = await workspace.resolve(".");
-  await execFileAsync(
-    process.env.LLMBENCH_PYTHON ?? "python3",
-    ["-c", script],
-    {
-      cwd: root,
-      env: { ...process.env, PYTHONPATH: root },
-      timeout: 5_000,
-      maxBuffer: 64 * 1024,
-    },
-  );
-  return true;
+function pythonHiddenTest(id: string, source: string): HiddenTest {
+  return { id, runtime: "python", source };
 }
 
 const CLAMP_HIDDEN_TESTS: HiddenTest[] = [
-  {
-    id: "in-range",
-    run: async (workspace) => (await loadClamp(workspace))(5, 0, 10) === 5,
-  },
-  {
-    id: "below-lower",
-    run: async (workspace) => (await loadClamp(workspace))(-3, 0, 10) === 0,
-  },
-  {
-    id: "above-upper",
-    run: async (workspace) => (await loadClamp(workspace))(15, 0, 10) === 10,
-  },
+  nodeHiddenTest(
+    "in-range",
+    `const { clamp } = require(path.join(workspaceRoot, "src/clamp.cjs"));
+assert.equal(clamp(5, 0, 10), 5);`,
+  ),
+  nodeHiddenTest(
+    "below-lower",
+    `const { clamp } = require(path.join(workspaceRoot, "src/clamp.cjs"));
+assert.equal(clamp(-3, 0, 10), 0);`,
+  ),
+  nodeHiddenTest(
+    "above-upper",
+    `const { clamp } = require(path.join(workspaceRoot, "src/clamp.cjs"));
+assert.equal(clamp(15, 0, 10), 10);`,
+  ),
 ];
 
 const ASYNC_CACHE_HIDDEN_TESTS: HiddenTest[] = [
-  {
-    id: "sequential-hit-reuses-loader",
-    run: async (workspace) => {
-      const loadOnce = await loadAsyncCache(workspace);
-      const cache = new Map<string, unknown>();
-      let calls = 0;
-      const first = await loadOnce(
-        "profile",
-        () => {
-          calls += 1;
-          return Promise.resolve("ada");
-        },
-        cache,
-      );
-      const second = await loadOnce(
-        "profile",
-        () => {
-          calls += 1;
-          return Promise.resolve("grace");
-        },
-        cache,
-      );
-      return first === "ada" && second === "ada" && calls === 1;
-    },
-  },
-  {
-    id: "concurrent-hit-shares-loader",
-    run: async (workspace) => {
-      const loadOnce = await loadAsyncCache(workspace);
-      const cache = new Map<string, unknown>();
-      let calls = 0;
-      const loader = async (): Promise<string> => {
-        calls += 1;
-        await Promise.resolve();
-        return "shared";
-      };
-      const [first, second] = await Promise.all([
-        loadOnce("settings", loader, cache),
-        loadOnce("settings", loader, cache),
-      ]);
-      return first === "shared" && second === "shared" && calls === 1;
-    },
-  },
-  {
-    id: "failed-loads-are-not-cached",
-    run: async (workspace) => {
-      const loadOnce = await loadAsyncCache(workspace);
-      const cache = new Map<string, unknown>();
-      let calls = 0;
-      const loader = (): Promise<string> => {
-        calls += 1;
-        if (calls === 1) {
-          return Promise.reject(new Error("temporary failure"));
-        }
-        return Promise.resolve("recovered");
-      };
-      await loadOnce("token", loader, cache).catch(() => undefined);
-      const recovered = await loadOnce("token", loader, cache);
-      return recovered === "recovered" && calls === 2;
-    },
-  },
+  nodeHiddenTest(
+    "sequential-hit-reuses-loader",
+    `const { loadOnce } = require(path.join(workspaceRoot, "src/cache.cjs"));
+const cache = new Map();
+let calls = 0;
+const first = await loadOnce("profile", () => {
+  calls += 1;
+  return Promise.resolve("ada");
+}, cache);
+const second = await loadOnce("profile", () => {
+  calls += 1;
+  return Promise.resolve("grace");
+}, cache);
+assert.equal(first, "ada");
+assert.equal(second, "ada");
+assert.equal(calls, 1);`,
+  ),
+  nodeHiddenTest(
+    "concurrent-hit-shares-loader",
+    `const { loadOnce } = require(path.join(workspaceRoot, "src/cache.cjs"));
+const cache = new Map();
+let calls = 0;
+const loader = async () => {
+  calls += 1;
+  await Promise.resolve();
+  return "shared";
+};
+const [first, second] = await Promise.all([
+  loadOnce("settings", loader, cache),
+  loadOnce("settings", loader, cache),
+]);
+assert.equal(first, "shared");
+assert.equal(second, "shared");
+assert.equal(calls, 1);`,
+  ),
+  nodeHiddenTest(
+    "failed-loads-are-not-cached",
+    `const { loadOnce } = require(path.join(workspaceRoot, "src/cache.cjs"));
+const cache = new Map();
+let calls = 0;
+const loader = () => {
+  calls += 1;
+  if (calls === 1) return Promise.reject(new Error("temporary failure"));
+  return Promise.resolve("recovered");
+};
+await loadOnce("token", loader, cache).catch(() => undefined);
+const recovered = await loadOnce("token", loader, cache);
+assert.equal(recovered, "recovered");
+assert.equal(calls, 2);`,
+  ),
 ];
 
 const STATE_REDUCER_HIDDEN_TESTS: HiddenTest[] = [
-  {
-    id: "add-event-is-immutable",
-    run: async (workspace) => {
-      const reduceCart = await loadCartReducer(workspace);
-      const original: Cart = {
-        currency: "GBP",
-        items: [{ sku: "book", quantity: 1 }],
-      };
-      const result = reduceCart(original, {
-        type: "add",
-        sku: "pen",
-        quantity: 2,
-      });
-      return (
-        result !== original &&
-        result.items !== original.items &&
-        original.items.length === 1 &&
-        result.items.length === 2 &&
-        result.items[1]?.sku === "pen"
-      );
-    },
-  },
-  {
-    id: "remove-event-is-immutable",
-    run: async (workspace) => {
-      const reduceCart = await loadCartReducer(workspace);
-      const original: Cart = {
-        items: [
-          { sku: "tea", quantity: 1 },
-          { sku: "mug", quantity: 1 },
-        ],
-      };
-      const result = reduceCart(original, { type: "remove", sku: "tea" });
-      return (
-        result !== original &&
-        result.items !== original.items &&
-        original.items.length === 2 &&
-        result.items.length === 1 &&
-        result.items[0]?.sku === "mug"
-      );
-    },
-  },
-  {
-    id: "unknown-event-clones-state",
-    run: async (workspace) => {
-      const reduceCart = await loadCartReducer(workspace);
-      const original: Cart = {
-        currency: "USD",
-        items: [{ sku: "notebook", quantity: 3 }],
-      };
-      const result = reduceCart(original, { type: "noop" });
-      return (
-        result !== original &&
-        result.items !== original.items &&
-        JSON.stringify(result) === JSON.stringify(original)
-      );
-    },
-  },
+  nodeHiddenTest(
+    "add-event-is-immutable",
+    `const { reduceCart } = require(path.join(workspaceRoot, "src/cart.cjs"));
+const original = { currency: "GBP", items: [{ sku: "book", quantity: 1 }] };
+const result = reduceCart(original, { type: "add", sku: "pen", quantity: 2 });
+assert.notEqual(result, original);
+assert.notEqual(result.items, original.items);
+assert.equal(original.items.length, 1);
+assert.deepEqual(result.items, [
+  { sku: "book", quantity: 1 },
+  { sku: "pen", quantity: 2 },
+]);`,
+  ),
+  nodeHiddenTest(
+    "remove-event-is-immutable",
+    `const { reduceCart } = require(path.join(workspaceRoot, "src/cart.cjs"));
+const original = { items: [
+  { sku: "tea", quantity: 1 },
+  { sku: "mug", quantity: 1 },
+] };
+const result = reduceCart(original, { type: "remove", sku: "tea" });
+assert.notEqual(result, original);
+assert.notEqual(result.items, original.items);
+assert.equal(original.items.length, 2);
+assert.deepEqual(result.items, [{ sku: "mug", quantity: 1 }]);`,
+  ),
+  nodeHiddenTest(
+    "unknown-event-clones-state",
+    `const { reduceCart } = require(path.join(workspaceRoot, "src/cart.cjs"));
+const original = { currency: "USD", items: [{ sku: "notebook", quantity: 3 }] };
+const result = reduceCart(original, { type: "noop" });
+assert.notEqual(result, original);
+assert.notEqual(result.items, original.items);
+assert.deepEqual(result, original);`,
+  ),
 ];
 
 const DURATION_HIDDEN_TESTS: HiddenTest[] = [
-  {
-    id: "milliseconds-and-bare-values",
-    run: (workspace) =>
-      runPython(
-        workspace,
-        `from src.duration import parse_duration
+  pythonHiddenTest(
+    "milliseconds-and-bare-values",
+    `from src.duration import parse_duration
 assert parse_duration("150ms") == 150
 assert parse_duration("42") == 42
 `,
-      ),
-  },
-  {
-    id: "seconds-convert-to-ms",
-    run: (workspace) =>
-      runPython(
-        workspace,
-        `from src.duration import parse_duration
+  ),
+  pythonHiddenTest(
+    "seconds-convert-to-ms",
+    `from src.duration import parse_duration
 assert parse_duration("2s") == 2000
 assert parse_duration("0.25s") == 250
 `,
-      ),
-  },
-  {
-    id: "minutes-and-decimals-convert-to-ms",
-    run: (workspace) =>
-      runPython(
-        workspace,
-        `from src.duration import parse_duration
+  ),
+  pythonHiddenTest(
+    "minutes-and-decimals-convert-to-ms",
+    `from src.duration import parse_duration
 assert parse_duration("2m") == 120000
 assert parse_duration("1.5m") == 90000
 `,
-      ),
-  },
+  ),
 ];
 
 const API_BOUNDARY_HIDDEN_TESTS: HiddenTest[] = [
-  {
-    id: "only-public-fields-cross-boundary",
-    run: (workspace) =>
-      runPython(
-        workspace,
-        `from src.profile_dto import public_profile
+  pythonHiddenTest(
+    "only-public-fields-cross-boundary",
+    `from src.profile_dto import public_profile
 user = {
     "id": 42,
     "username": "ada",
@@ -367,14 +256,10 @@ assert profile == {
     "email": "ada@example.test",
 }
 `,
-      ),
-  },
-  {
-    id: "display-name-falls-back-to-username",
-    run: (workspace) =>
-      runPython(
-        workspace,
-        `from src.profile_dto import public_profile
+  ),
+  pythonHiddenTest(
+    "display-name-falls-back-to-username",
+    `from src.profile_dto import public_profile
 profile = public_profile({
     "id": "u-1",
     "username": "grace",
@@ -388,14 +273,10 @@ assert profile == {
     "email": "grace@example.test",
 }
 `,
-      ),
-  },
-  {
-    id: "input-user-is-not-mutated",
-    run: (workspace) =>
-      runPython(
-        workspace,
-        `from copy import deepcopy
+  ),
+  pythonHiddenTest(
+    "input-user-is-not-mutated",
+    `from copy import deepcopy
 from src.profile_dto import public_profile
 user = {
     "id": 7,
@@ -408,30 +289,22 @@ before = deepcopy(user)
 public_profile(user)
 assert user == before
 `,
-      ),
-  },
+  ),
 ];
 
 const RESOURCE_CLEANUP_HIDDEN_TESTS: HiddenTest[] = [
-  {
-    id: "copies-trimmed-lines",
-    run: (workspace) =>
-      runPython(
-        workspace,
-        `from pathlib import Path
+  pythonHiddenTest(
+    "copies-trimmed-lines",
+    `from pathlib import Path
 from src.report_copy import copy_report
 Path("input.txt").write_text("alpha  \\nbeta\\n", encoding="utf-8")
 copy_report("input.txt", "output.txt")
 assert Path("output.txt").read_text(encoding="utf-8") == "alpha\\nbeta\\n"
 `,
-      ),
-  },
-  {
-    id: "closes-files-after-success",
-    run: (workspace) =>
-      runPython(
-        workspace,
-        `import builtins
+  ),
+  pythonHiddenTest(
+    "closes-files-after-success",
+    `import builtins
 from src.report_copy import copy_report
 
 opened = []
@@ -473,14 +346,10 @@ assert [type(handle).__name__ for handle in opened] == ["Reader", "Writer"]
 assert opened[1].buffer == ["alpha\\n"]
 assert all(handle.closed for handle in opened)
 `,
-      ),
-  },
-  {
-    id: "closes-files-when-write-fails",
-    run: (workspace) =>
-      runPython(
-        workspace,
-        `import builtins
+  ),
+  pythonHiddenTest(
+    "closes-files-when-write-fails",
+    `import builtins
 from src.report_copy import copy_report
 
 opened = []
@@ -524,8 +393,7 @@ else:
 assert [type(handle).__name__ for handle in opened] == ["Reader", "FailingWriter"]
 assert all(handle.closed for handle in opened)
 `,
-      ),
-  },
+  ),
 ];
 
 const NODE_RUNTIME: RuntimeRequirement = {
@@ -1074,8 +942,9 @@ function hashGrader(hiddenTests: readonly HiddenTest[]): string {
   for (const test of hiddenTests) {
     hash.update(test.id);
     hash.update("\0");
-    const run = (test as { readonly run: unknown }).run;
-    hash.update(String(run));
+    hash.update(test.runtime);
+    hash.update("\0");
+    hash.update(test.source);
     hash.update("\0");
   }
   return hash.digest("hex");

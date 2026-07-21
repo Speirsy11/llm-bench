@@ -6,6 +6,7 @@
 
 export * from "./types";
 export * from "./keys";
+export * from "./seal";
 export * from "./sealed-box";
 export * from "./redaction";
 export * from "./credential-store";

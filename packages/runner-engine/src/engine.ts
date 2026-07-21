@@ -89,7 +89,9 @@ export async function executeAgenticTask(
     let status = classify(options.cancel, deadline, harnessError);
     let grade: GradeResult | null = null;
     if (status === "completed") {
-      grade = await gradeHiddenTests(workspace, scenario.hiddenTests);
+      grade = await gradeHiddenTests(workspace, scenario.hiddenTests, {
+        signal,
+      });
       // Grading is part of the run: if cancel/deadline fired while the hidden
       // tests ran, honour the interruption instead of reporting a grade.
       const afterGrading = classify(options.cancel, deadline, harnessError);

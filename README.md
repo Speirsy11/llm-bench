@@ -1,8 +1,31 @@
 # LLMBench
 
-LLMBench is an agentic-first benchmarking platform for comparing models, harnesses, and toolsets under reproducible conditions.
+LLMBench is an agentic-first benchmarking platform for comparing models,
+harnesses, and toolsets under reproducible conditions.
 
-The `tooling/` and `turbo/` directories provide the shared quality baseline used by every product package. `@llm-bench/contracts` (EPIC-02) defines the provider-neutral vocabulary — benchmarks, harnesses, metrics, manifests, events, and the versioned wire protocol — that every later package builds on. `@llm-bench/runner-engine` and `@llm-bench/repository-repair` (EPIC-03/08) provide the repository-repair corpus end to end locally: ephemeral, path-contained workspaces run deterministic harnesses, hidden tests grade TypeScript and Python repairs independently, and workspaces are cleaned up. `@llm-bench/control-plane` and `@llm-bench/web` (EPIC-04) add Neon persistence, Auth.js GitHub identity, owner-only private records, administrator curation, and the public/private application shells. `@speirsy11/llm-bench-runner` (EPIC-05) adds device-code pairing, a durable one-job worker, versioned runner HTTP endpoints, and private direct artifact uploads. `@llm-bench/crypto`, `@llm-bench/openai-compatible`, and `@llm-bench/llm-bench-harness` (EPIC-06) add runner-bound sealed credentials and the built-in bounded agent. `@llm-bench/process-harness` and `@llm-bench/codex-harness` (EPIC-09) add bounded subprocess execution and Codex response, workspace, and resume support through the common harness contract.
+The `tooling/` and `turbo/` directories provide the shared quality baseline used
+by every package. The product is split into provider-neutral contracts, a hosted
+control plane and dashboard, a local runner, repository-repair fixtures and
+grading, and interchangeable harness adapters. Runner protocol `2.0` leases an
+immutable workload, target, toolset, limits, and runner-bound credential. The
+runner validates those inputs against its local corpus before selecting
+LLMBench, Codex, or Claude; Pi currently rejects agentic work before process
+start.
+
+LLMBench/OpenRouter credentials are sealed in the browser to the selected
+runner's raw X25519 public key. The hosted application stores and leases only
+ciphertext. Plaintext is opened in memory by that runner and revealed only to
+the selected provider transport. Codex and Claude continue to use their native
+local authentication and never receive the OpenRouter ciphertext.
+
+Repository repair runs in an ephemeral, path-contained workspace with explicit
+tool, turn, token, and duration limits. Hidden TypeScript and Python grading
+runs after the harness in a disposable child process with a credential-scrubbed
+environment, bounded output, cancellation, and timeout. This protects the
+long-lived runner from grader crashes; limit violations terminate the grader
+process group. It is not a hostile-code sandbox: Python lacks Node's permission
+model, and network denial remains the responsibility of the surrounding runner
+environment.
 
 ## Prerequisites
 
@@ -14,6 +37,23 @@ A clean clone installs reproducibly with:
 ```bash
 pnpm install --frozen-lockfile
 ```
+
+## Local runner quick start
+
+Build and pair the runner from a workspace checkout:
+
+```bash
+pnpm --filter @speirsy11/llm-bench-runner build
+node packages/runner/dist/cli.cjs login https://your-llmbench.example workstation
+node packages/runner/dist/cli.cjs start
+node packages/runner/dist/cli.cjs doctor
+```
+
+The runner supports macOS and Linux with Node 22 or newer. See the
+[runner operations guide](packages/runner/README.md) for local state, native
+harness prerequisites, protocol-v2 migration, and troubleshooting. See the
+[crypto package guide](packages/crypto/README.md) for the browser-sealing and
+plaintext boundaries.
 
 ## Workspace layout
 
@@ -43,7 +83,7 @@ Internal packages use the `@llm-bench` npm scope. The explicitly published runne
 | `pnpm test:coverage`        | Vitest suites with V8 coverage and thresholds |
 | `pnpm test:fixtures`        | Repository-repair fixture corpus tests        |
 | `pnpm test:integration`     | Real PostgreSQL integration suites            |
-| `pnpm test:runner-contract` | Runner and Codex process contracts            |
+| `pnpm test:runner-contract` | Runner, Codex, Claude, and Pi contracts       |
 | `pnpm db:migrate`           | Apply checked-in Drizzle migrations           |
 | `pnpm db:test:reset`        | Reset only a database explicitly named test   |
 | `pnpm build`                | Turbo build graph                             |

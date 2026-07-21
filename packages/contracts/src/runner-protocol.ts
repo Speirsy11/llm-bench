@@ -1,10 +1,18 @@
 import { z } from "zod";
 
 import { CapabilitySchema } from "./capability";
+import { RunnerPublicKeySchema, SealedCredentialSchema } from "./credential";
 import { BenchmarkEventSchema } from "./events";
+import {
+  HarnessManifestSchema,
+  LimitsSchema,
+  ModelRouteSchema,
+  ToolsetSchema,
+} from "./manifest";
 import { MetricObservationSchema } from "./metric";
+import { AgenticTaskSchema } from "./workload";
 
-export const RUNNER_PROTOCOL_VERSION = "1.0" as const;
+export const RUNNER_PROTOCOL_VERSION = "2.0" as const;
 
 export const RunnerEnvironmentSchema = z.strictObject({
   os: z.enum(["darwin", "linux"]),
@@ -20,7 +28,7 @@ export const RunnerEnvironmentSchema = z.strictObject({
 export const RunnerPairingStartRequestSchema = z.strictObject({
   protocolVersion: z.literal(RUNNER_PROTOCOL_VERSION),
   name: z.string().trim().min(1).max(100),
-  publicKey: z.string().min(1),
+  publicKey: RunnerPublicKeySchema,
   capabilities: z.array(CapabilitySchema),
   environment: RunnerEnvironmentSchema,
 });
@@ -58,6 +66,28 @@ export const RunnerCheckpointSchema = z.strictObject({
   state: z.record(z.string(), z.unknown()),
 });
 
+export const RunnerExecutionSchema = z.strictObject({
+  workload: z.strictObject({
+    kind: z.literal("agentic"),
+    task: AgenticTaskSchema,
+    fixtureContentHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    graderHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  }),
+  target: z.strictObject({
+    modelRoute: ModelRouteSchema,
+    harness: HarnessManifestSchema,
+    toolset: ToolsetSchema,
+  }),
+  limits: LimitsSchema.extend({ maxTurns: z.number().int().positive() }),
+  credential: z
+    .strictObject({
+      profileId: z.uuid(),
+      provider: z.string().min(1),
+      sealed: SealedCredentialSchema,
+    })
+    .nullable(),
+});
+
 export const RunnerLeaseSchema = z.strictObject({
   jobId: z.uuid(),
   attemptId: z.uuid(),
@@ -66,6 +96,7 @@ export const RunnerLeaseSchema = z.strictObject({
     id: z.string().min(1),
     version: z.string().min(1),
   }),
+  execution: RunnerExecutionSchema,
   queuePosition: z.number().int().nonnegative(),
   checkpoint: RunnerCheckpointSchema.nullable(),
   cancellationRequested: z.boolean(),
@@ -127,6 +158,7 @@ export const RunnerTerminalRequestSchema = z.strictObject({
 });
 
 export type RunnerCheckpoint = z.infer<typeof RunnerCheckpointSchema>;
+export type RunnerExecution = z.infer<typeof RunnerExecutionSchema>;
 export type RunnerEnvironment = z.infer<typeof RunnerEnvironmentSchema>;
 export type RunnerPairingStartRequest = z.infer<
   typeof RunnerPairingStartRequestSchema

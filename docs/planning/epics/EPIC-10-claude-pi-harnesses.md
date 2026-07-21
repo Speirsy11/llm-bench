@@ -1,13 +1,13 @@
 ---
 id: EPIC-10
 title: Claude Code and Pi harnesses
-status: in_review
+status: complete
 depends_on:
   - EPIC-09
 owner: Codex
 branch: codex/epic-10-claude-pi
 pull_request: https://github.com/Speirsy11/llm-bench/pull/11
-last_updated: 2026-07-09
+last_updated: 2026-07-21
 ---
 
 # EPIC-10 — Claude Code and Pi harnesses

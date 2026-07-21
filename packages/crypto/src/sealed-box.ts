@@ -1,8 +1,16 @@
+import {
+  RawX25519KeySchema,
+  RunnerPublicKeySchema,
+  SEALED_CREDENTIAL_ALGORITHM,
+  SealedCredentialSchema,
+} from "@llm-bench/contracts";
+
+import type { SealedPayload } from "./sealed-payload";
 import type { RunnerIdentity, SealedCredential } from "./types";
 import { fingerprintPublicKey } from "./keys";
 import { Secret } from "./redaction";
+import { SEALED_PAYLOAD_VERSION } from "./sealed-payload";
 import { getSodium } from "./sodium";
-import { SEALED_BOX_ALGORITHM } from "./types";
 
 /** Raised when a sealed credential cannot be opened. Always fails closed. */
 export class SealedCredentialError extends Error {
@@ -19,53 +27,6 @@ export class SealedCredentialError extends Error {
   }
 }
 
-const SEALED_VERSION = 1 as const;
-
-interface SealedPayload {
-  v: typeof SEALED_VERSION;
-  runnerId: string;
-  secret: string;
-}
-
-export interface SealCredentialInput {
-  /** Runner permitted to open the credential. */
-  runnerId: string;
-  /** Base64 raw X25519 public key of that runner. */
-  recipientPublicKey: string;
-  /** Plaintext secret, e.g. an OpenRouter API key. */
-  secret: string;
-}
-
-/**
- * Seals a secret so only the runner holding the matching private key can open
- * it. The runner id is bound inside the authenticated ciphertext, so relabelling
- * a sealed credential for a different runner is detected on open.
- */
-export async function sealCredential(
-  input: SealCredentialInput,
-): Promise<SealedCredential> {
-  const sodium = await getSodium();
-  const payload: SealedPayload = {
-    v: SEALED_VERSION,
-    runnerId: input.runnerId,
-    secret: input.secret,
-  };
-  const recipient = sodium.from_base64(
-    input.recipientPublicKey,
-    sodium.base64_variants.ORIGINAL,
-  );
-  const box = sodium.crypto_box_seal(
-    sodium.from_string(JSON.stringify(payload)),
-    recipient,
-  );
-  return {
-    algorithm: SEALED_BOX_ALGORITHM,
-    runnerId: input.runnerId,
-    keyFingerprint: await fingerprintPublicKey(input.recipientPublicKey),
-    ciphertext: sodium.to_base64(box, sodium.base64_variants.ORIGINAL),
-  };
-}
-
 /**
  * Opens a sealed credential in memory on the target runner. Wrong-runner
  * routing, a mismatched key, an unknown algorithm, and any ciphertext tampering
@@ -75,20 +36,31 @@ export async function openCredential(
   sealed: SealedCredential,
   identity: RunnerIdentity,
 ): Promise<Secret> {
-  if ((sealed.algorithm as string) !== SEALED_BOX_ALGORITHM) {
+  if ((sealed.algorithm as string) !== SEALED_CREDENTIAL_ALGORITHM) {
     throw new SealedCredentialError(
       `Unsupported sealed credential algorithm.`,
       "unsupported-algorithm",
     );
   }
-  if (sealed.runnerId !== identity.runnerId) {
+  const parsed = SealedCredentialSchema.safeParse(sealed);
+  if (!parsed.success) {
+    throw new SealedCredentialError(
+      `Sealed credential metadata is malformed.`,
+      "tampered",
+    );
+  }
+  const envelope = parsed.data;
+  if (envelope.runnerId !== identity.runnerId) {
     throw new SealedCredentialError(
       `Sealed credential is addressed to a different runner.`,
       "wrong-runner",
     );
   }
   if (
-    sealed.keyFingerprint !== (await fingerprintPublicKey(identity.publicKey))
+    envelope.keyFingerprint !==
+    (await fingerprintPublicKey(
+      RunnerPublicKeySchema.parse(identity.publicKey),
+    ))
   ) {
     throw new SealedCredentialError(
       `Sealed credential was sealed to a different key.`,
@@ -98,15 +70,15 @@ export async function openCredential(
 
   const sodium = await getSodium();
   const publicKey = sodium.from_base64(
-    identity.publicKey,
+    RunnerPublicKeySchema.parse(identity.publicKey),
     sodium.base64_variants.ORIGINAL,
   );
   const privateKey = sodium.from_base64(
-    identity.privateKey,
+    RawX25519KeySchema.parse(identity.privateKey),
     sodium.base64_variants.ORIGINAL,
   );
   const ciphertext = sodium.from_base64(
-    sealed.ciphertext,
+    envelope.ciphertext,
     sodium.base64_variants.ORIGINAL,
   );
 
@@ -144,7 +116,7 @@ function parsePayload(raw: string): SealedPayload {
   if (
     typeof parsed !== "object" ||
     parsed === null ||
-    payload.v !== SEALED_VERSION ||
+    payload.v !== SEALED_PAYLOAD_VERSION ||
     typeof payload.runnerId !== "string" ||
     typeof payload.secret !== "string"
   ) {

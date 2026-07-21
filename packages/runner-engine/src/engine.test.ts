@@ -45,13 +45,19 @@ function benchmark(): SumBenchmark {
   });
 }
 
-function hiddenTest(
-  id: string,
-  passes: (content: string) => boolean,
-): HiddenTest {
+function hiddenTest(id: string, expectedContent?: string): HiddenTest {
   return {
     id,
-    run: async (workspace) => passes(await workspace.readFile("src/value.txt")),
+    runtime: "node",
+    source: `const content = require("node:fs").readFileSync(
+  path.join(workspaceRoot, "src/value.txt"),
+  "utf8",
+);
+${
+  expectedContent === undefined
+    ? 'assert.equal(typeof content, "string");'
+    : `assert.equal(content, ${JSON.stringify(expectedContent)});`
+}`,
   };
 }
 
@@ -118,8 +124,8 @@ describe("executeAgenticTask", () => {
   it("grades a full repair through the hidden tests and reports ratio 1", async () => {
     const result = await execute({
       scenario: scenario([
-        hiddenTest("is-fixed", (c) => c === "fixed"),
-        hiddenTest("not-broken", (c) => c !== "broken"),
+        hiddenTest("is-fixed", "fixed"),
+        hiddenTest("not-broken", "fixed"),
       ]),
       harness: writingHarness("fixed"),
     });
@@ -138,8 +144,8 @@ describe("executeAgenticTask", () => {
   it("detects an incomplete patch with a partial hidden-test ratio", async () => {
     const result = await execute({
       scenario: scenario([
-        hiddenTest("changed", (c) => c !== "broken"),
-        hiddenTest("is-fixed", (c) => c === "fixed"),
+        hiddenTest("changed", "half"),
+        hiddenTest("is-fixed", "fixed"),
       ]),
       harness: writingHarness("half"),
     });
@@ -154,7 +160,7 @@ describe("executeAgenticTask", () => {
 
   it("captures the final diff and stores it as an artifact", async () => {
     const result = await execute({
-      scenario: scenario([hiddenTest("ok", () => true)]),
+      scenario: scenario([hiddenTest("ok")]),
       harness: writingHarness("fixed"),
     });
 
@@ -179,7 +185,7 @@ describe("executeAgenticTask", () => {
       artifactStore: new FileArtifactStore(path.join(root, "artifacts")),
       eventSpool,
       now: counter([1_000, 1_500]),
-      scenario: scenario([hiddenTest("ok", () => true)]),
+      scenario: scenario([hiddenTest("ok")]),
       harness: writingHarness("fixed"),
     });
 
@@ -205,7 +211,7 @@ describe("executeAgenticTask", () => {
       artifactStore: new FileArtifactStore(path.join(root, "artifacts")),
       eventSpool,
       now: counter([1_000, 1_500]),
-      scenario: scenario([hiddenTest("ok", () => true)]),
+      scenario: scenario([hiddenTest("ok")]),
       harness: {
         repair: () => Promise.reject(new Error("compiler crashed")),
       },
@@ -225,7 +231,7 @@ describe("executeAgenticTask", () => {
 
   it("describes a non-Error harness rejection in the failure message", async () => {
     const result = await execute({
-      scenario: scenario([hiddenTest("ok", () => true)]),
+      scenario: scenario([hiddenTest("ok")]),
       harness: {
         // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
         repair: () => Promise.reject("string failure reason"),
@@ -243,7 +249,7 @@ describe("executeAgenticTask", () => {
     cancel.abort();
 
     const result = await execute({
-      scenario: scenario([hiddenTest("ok", () => true)]),
+      scenario: scenario([hiddenTest("ok")]),
       harness: {
         repair: async ({ workspace, signal }) => {
           await workspace.writeFile("src/value.txt", "partial");
@@ -272,7 +278,7 @@ describe("executeAgenticTask", () => {
       artifactStore: new FileArtifactStore(path.join(root, "artifacts")),
       eventSpool,
       now: counter([1_000, 1_500]),
-      scenario: scenario([hiddenTest("ok", () => true)]),
+      scenario: scenario([hiddenTest("ok")]),
       deadline: deadline.signal,
       harness: {
         repair: async ({ signal }) => {
@@ -292,7 +298,7 @@ describe("executeAgenticTask", () => {
 
   it("deletes the workspace after a terminal run and reports it", async () => {
     const result = await execute({
-      scenario: scenario([hiddenTest("ok", () => true)]),
+      scenario: scenario([hiddenTest("ok")]),
       harness: writingHarness("fixed"),
     });
 
@@ -312,7 +318,7 @@ describe("executeAgenticTask", () => {
         artifactStore: new FileArtifactStore(path.join(root, "artifacts")),
         eventSpool: new JsonlEventSpool(path.join(root, "events.jsonl")),
         scenario: {
-          ...scenario([hiddenTest("ok", () => true)]),
+          ...scenario([hiddenTest("ok")]),
           prepare: () => Promise.reject(new Error("setup failed")),
         },
         harness: writingHarness("fixed"),
@@ -327,8 +333,8 @@ describe("executeAgenticTask", () => {
 
   it("honours cancellation that fires while hidden grading runs", async () => {
     const cancel = new AbortController();
-
-    const result = await execute({
+    const startedAt = Date.now();
+    const pending = execute({
       scenario: {
         benchmark: benchmark(),
         task: TASK,
@@ -336,19 +342,21 @@ describe("executeAgenticTask", () => {
         hiddenTests: [
           {
             id: "aborts-mid-grading",
-            run: () => {
-              cancel.abort();
-              return Promise.resolve(true);
-            },
+            runtime: "node",
+            source:
+              "await new Promise((resolve) => setTimeout(resolve, 2_000));",
           },
         ],
       },
       harness: writingHarness("fixed"),
       cancel: cancel.signal,
     });
+    setTimeout(() => cancel.abort(), 20);
+    const result = await pending;
 
     expect(result.status).toBe("cancelled");
     expect(result.grade).toBeNull();
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
     expect(result.observations).toEqual([
       { metricId: "hidden_test_pass_ratio", value: null },
     ]);
@@ -363,7 +371,7 @@ describe("executeAgenticTask", () => {
       workspaceRoot: root,
       artifactStore: new FileArtifactStore(path.join(root, "artifacts")),
       eventSpool: new JsonlEventSpool(path.join(root, "events.jsonl")),
-      scenario: scenario([hiddenTest("ok", () => true)]),
+      scenario: scenario([hiddenTest("ok")]),
       harness: writingHarness("fixed"),
     });
 
@@ -373,7 +381,7 @@ describe("executeAgenticTask", () => {
 
   it("defaults the deadline to the configured duration limit", async () => {
     const result = await execute({
-      scenario: scenario([hiddenTest("ok", () => true)]),
+      scenario: scenario([hiddenTest("ok")]),
       harness: writingHarness("fixed"),
       deadline: undefined,
     });

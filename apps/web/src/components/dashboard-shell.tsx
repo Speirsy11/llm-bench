@@ -5,10 +5,12 @@ import type {
   CredentialProfile,
   DashboardExperimentDetail,
   DashboardRunner,
-  ExperimentPreview,
 } from "@llm-bench/control-plane";
 
+import type { DashboardHarnessPreviews } from "./experiment-matrix";
+import { CredentialForm } from "./credential-form";
 import { DashboardPoller } from "./dashboard-poller";
+import { ExperimentMatrix } from "./experiment-matrix";
 
 type FormAction = (formData: FormData) => void | Promise<void>;
 const activeJobStatuses = new Set([
@@ -26,10 +28,11 @@ export function DashboardShell({
   githubLogin,
   launchExperimentAction,
   name,
-  preview,
+  previews,
   retryJobAction,
   runners,
   saveCredentialProfileAction,
+  selectedRunnerId,
   experiments,
 }: {
   readonly cancelJobAction?: FormAction;
@@ -38,19 +41,32 @@ export function DashboardShell({
   readonly githubLogin: string;
   readonly launchExperimentAction?: FormAction;
   readonly name: string;
-  readonly preview: ExperimentPreview | null;
+  readonly previews: DashboardHarnessPreviews;
   readonly retryJobAction?: FormAction;
   readonly runners: readonly DashboardRunner[];
   readonly saveCredentialProfileAction?: FormAction;
+  readonly selectedRunnerId?: string | null;
 }) {
   const activePolling = experiments.some((experiment) =>
     experiment.jobs.some((job) => activeJobStatuses.has(job.status)),
   );
-  const primaryRunner = runners[0] ?? null;
-  const primaryCredential = credentialProfiles[0] ?? null;
-  const canLaunch = Boolean(
-    primaryRunner && primaryCredential && preview?.canLaunch,
-  );
+  const selectedRunner =
+    runners.find(({ id }) => id === selectedRunnerId) ??
+    runners.find(({ status }) => status === "online") ??
+    runners[0] ??
+    null;
+  const selectedCredential =
+    credentialProfiles.find(
+      ({ runnerId }) => runnerId === selectedRunner?.id,
+    ) ?? null;
+  const initialHarnessId =
+    selectedCredential && previews.llmbench
+      ? "llmbench"
+      : previews.codex
+        ? "codex"
+        : previews.claude
+          ? "claude"
+          : "llmbench";
 
   return (
     <main className="bg-background text-foreground min-h-screen">
@@ -117,7 +133,24 @@ export function DashboardShell({
                           {runner.environment.architecture}
                         </p>
                       </div>
-                      <StatusPill status={runner.status} />
+                      <div className="flex items-center gap-3">
+                        <StatusPill status={runner.status} />
+                        {runner.id === selectedRunner?.id ? (
+                          <span
+                            aria-current="true"
+                            className="text-primary text-xs font-medium"
+                          >
+                            Selected
+                          </span>
+                        ) : (
+                          <Link
+                            className="text-primary text-xs font-medium focus-visible:outline-2 focus-visible:outline-offset-4"
+                            href={`/dashboard?runnerId=${encodeURIComponent(runner.id)}`}
+                          >
+                            Use runner
+                          </Link>
+                        )}
+                      </div>
                     </div>
                   </li>
                 ))}
@@ -149,168 +182,27 @@ export function DashboardShell({
                 ))}
               </ul>
             )}
-            {primaryRunner ? (
-              <form
+            {selectedRunner && saveCredentialProfileAction ? (
+              <CredentialForm
                 action={saveCredentialProfileAction}
-                className="border-border mt-5 grid gap-3 border-t pt-5"
-              >
-                <input name="runnerId" type="hidden" value={primaryRunner.id} />
-                <label className="grid gap-2 text-sm font-medium">
-                  Label
-                  <input
-                    className="border-input bg-background rounded-md border px-3 py-2"
-                    name="label"
-                    required
-                    defaultValue="OpenRouter"
-                  />
-                </label>
-                <label className="grid gap-2 text-sm font-medium">
-                  Provider
-                  <select
-                    className="border-input bg-background rounded-md border px-3 py-2"
-                    name="provider"
-                    defaultValue="openrouter"
-                  >
-                    <option value="openrouter">OpenRouter</option>
-                  </select>
-                </label>
-                <label className="grid gap-2 text-sm font-medium">
-                  Masked secret
-                  <input
-                    className="border-input bg-background rounded-md border px-3 py-2"
-                    name="maskedSecret"
-                    required
-                    placeholder="sk-or-v1...abcd"
-                  />
-                </label>
-                <label className="grid gap-2 text-sm font-medium">
-                  Key fingerprint
-                  <input
-                    className="border-input bg-background rounded-md border px-3 py-2"
-                    name="keyFingerprint"
-                    required
-                  />
-                </label>
-                <label className="grid gap-2 text-sm font-medium">
-                  Sealed ciphertext
-                  <textarea
-                    className="border-input bg-background min-h-24 rounded-md border px-3 py-2"
-                    name="ciphertext"
-                    required
-                  />
-                </label>
-                <button
-                  className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-offset-4"
-                  type="submit"
-                >
-                  Save credential
-                </button>
-              </form>
+                runner={{
+                  id: selectedRunner.id,
+                  publicKey: selectedRunner.publicKey,
+                }}
+              />
             ) : null}
           </WorkspacePanel>
         </section>
 
         <section className="border-border mt-8 border-t pt-8">
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
-            <WorkspacePanel title="Experiment Matrix">
-              {canLaunch && primaryRunner && primaryCredential ? (
-                <form action={launchExperimentAction} className="grid gap-4">
-                  <input
-                    name="runnerId"
-                    type="hidden"
-                    value={primaryRunner.id}
-                  />
-                  <input
-                    name="credentialProfileId"
-                    type="hidden"
-                    value={primaryCredential.id}
-                  />
-                  <label className="grid gap-2 text-sm font-medium">
-                    Name
-                    <input
-                      className="border-input bg-background rounded-md border px-3 py-2"
-                      name="name"
-                      required
-                      defaultValue="Repository repair"
-                    />
-                  </label>
-                  <fieldset className="grid gap-3">
-                    <legend className="text-sm font-medium">
-                      Model routes
-                    </legend>
-                    <label className="flex items-center gap-3 text-sm">
-                      <input
-                        name="modelRoute"
-                        type="checkbox"
-                        value="openrouter-gpt-4o"
-                        defaultChecked
-                      />
-                      OpenRouter · GPT-4o
-                    </label>
-                    <label className="flex items-center gap-3 text-sm">
-                      <input
-                        name="modelRoute"
-                        type="checkbox"
-                        value="openrouter-llama"
-                        defaultChecked
-                      />
-                      OpenRouter · Llama 3.1
-                    </label>
-                  </fieldset>
-                  <label className="flex items-center gap-3 text-sm">
-                    <input name="spendConfirmed" required type="checkbox" />
-                    Confirm unknown spend
-                  </label>
-                  <button
-                    className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-offset-4"
-                    type="submit"
-                  >
-                    Launch experiment
-                  </button>
-                </form>
-              ) : primaryRunner && primaryCredential ? (
-                <EmptyState text="Resolve matrix blockers before launching." />
-              ) : (
-                <EmptyState text="Pair a runner and save a credential first." />
-              )}
-            </WorkspacePanel>
-
-            <WorkspacePanel title="Preview">
-              {preview ? (
-                <div className="space-y-4">
-                  <div>
-                    <p className="text-3xl font-semibold">
-                      {preview.projectedJobCount}
-                    </p>
-                    <p className="text-muted-foreground text-sm">
-                      projected jobs · spend unknown
-                    </p>
-                  </div>
-                  {preview.blockers.length > 0 ? (
-                    <ul className="space-y-2" role="alert">
-                      {preview.blockers.map((blocker) => (
-                        <li className="text-destructive text-sm" key={blocker}>
-                          {blocker}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                  <ol className="space-y-2">
-                    {preview.order.map((target) => (
-                      <li
-                        className="border-border rounded-lg border px-3 py-2 text-sm"
-                        key={target.position}
-                      >
-                        {target.position + 1}. {target.modelRouteId} ·{" "}
-                        {target.harnessId} · {target.toolsetId}
-                      </li>
-                    ))}
-                  </ol>
-                </div>
-              ) : (
-                <EmptyState text="No matrix preview yet." />
-              )}
-            </WorkspacePanel>
+            <ExperimentMatrix
+              action={launchExperimentAction}
+              credentialProfileId={selectedCredential?.id}
+              initialHarnessId={initialHarnessId}
+              previews={previews}
+              runnerId={selectedRunner?.id ?? null}
+            />
           </div>
         </section>
 

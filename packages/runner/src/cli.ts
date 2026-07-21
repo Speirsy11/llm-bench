@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { generateKeyPairSync } from "node:crypto";
+
+import { generateRunnerKeyPair } from "@llm-bench/crypto";
 
 import { VercelBlobUploader } from "./blob-uploader";
 import { RunnerCli } from "./cli-app";
@@ -71,7 +72,13 @@ async function runDaemon(): Promise<void> {
   const worker = new RunnerWorker({
     state,
     transport,
-    executor: new TracerExecutor(state.root),
+    executor: new TracerExecutor(state.root, {
+      identity: {
+        runnerId: credentials.runnerId,
+        publicKey: credentials.publicKey,
+        privateKey: credentials.privateKey,
+      },
+    }),
     artifactUploader: new VercelBlobUploader(
       credentials,
       state.path("artifacts"),
@@ -92,18 +99,6 @@ async function runDaemon(): Promise<void> {
       ),
     intervalMs: 2000,
   });
-}
-
-function generateRunnerKeyPair() {
-  const { publicKey, privateKey } = generateKeyPairSync("x25519");
-  return {
-    publicKey: publicKey
-      .export({ type: "spki", format: "der" })
-      .toString("base64"),
-    privateKey: privateKey
-      .export({ type: "pkcs8", format: "der" })
-      .toString("base64"),
-  };
 }
 
 function sleep(milliseconds: number): Promise<void> {
