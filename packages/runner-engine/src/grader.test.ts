@@ -564,19 +564,26 @@ assert.equal(
           runtime: "python",
           source: `import subprocess
 import time
+started_marker = Path("grandchild-started.txt")
+started = str(started_marker.resolve())
 marker = str(Path("grandchild-survived.txt").resolve())
-Path("grandchild-started.txt").write_text("started", encoding="utf-8")
 subprocess.Popen([
     sys.executable,
     "-c",
-    f'import time; from pathlib import Path; time.sleep(0.3); Path({marker!r}).write_text("alive")',
+    f'import time; from pathlib import Path; Path({started!r}).write_text("started", encoding="utf-8"); time.sleep(1.25); Path({marker!r}).write_text("alive", encoding="utf-8")',
 ])
-time.sleep(1)`,
+for _ in range(100):
+    if started_marker.exists():
+        break
+    time.sleep(0.01)
+else:
+    raise RuntimeError("grandchild did not start")
+time.sleep(2)`,
         },
       ],
-      { timeoutMs: 100 },
+      { timeoutMs: 1_000 },
     );
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
 
     expect(grade.failedIds).toEqual(["grandchild"]);
     await expect(
