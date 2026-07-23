@@ -117,7 +117,7 @@ export class CodexHarness extends JsonlProcessHarnessAdapter<CodexEvent> {
       "--ignore-user-config",
       "--ignore-rules",
       "--model",
-      request.modelRouteId,
+      this.modelFor(request.modelRouteId),
     ];
     const threadId = threadIdFrom(request.checkpoint);
     if (threadId) {
@@ -136,6 +136,13 @@ export class CodexHarness extends JsonlProcessHarnessAdapter<CodexEvent> {
       ...(this.options.ephemeral ? ["--ephemeral"] : []),
       "-",
     ];
+  }
+
+  private modelFor(routeId: string): string {
+    return (
+      this.manifest.modelRoutes.find((route) => route.id === routeId)?.model ??
+      routeId
+    );
   }
 
   private result(

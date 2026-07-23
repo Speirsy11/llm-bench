@@ -5,9 +5,10 @@ import {
   RunnerHttpTransport,
   startRunnerPairing,
 } from "./http-transport";
+import { runnerLeaseFixture } from "./test-fixture";
 
 describe("RunnerHttpTransport", () => {
-  it("authenticates and validates a leased job from the v1 API", async () => {
+  it("authenticates and validates a leased job from the v2 API", async () => {
     const requests: Request[] = [];
     const transport = new RunnerHttpTransport({
       serverUrl: "https://bench.example",
@@ -16,16 +17,8 @@ describe("RunnerHttpTransport", () => {
         requests.push(request);
         return Promise.resolve(
           Response.json({
-            protocolVersion: "1.0",
-            lease: {
-              jobId: "70b70847-ec1c-4aeb-ac0f-bf7db0328efe",
-              attemptId: "d0da824f-6f6a-4a01-af27-f7448d22bb39",
-              leaseToken: "lease-token",
-              benchmark: { id: "repository-repair", version: "1.0.0" },
-              queuePosition: 0,
-              checkpoint: null,
-              cancellationRequested: false,
-            },
+            protocolVersion: "2.0",
+            lease: runnerLeaseFixture(),
           }),
         );
       },
@@ -48,14 +41,14 @@ describe("RunnerHttpTransport", () => {
       if (url.pathname.endsWith("/heartbeat")) {
         return Promise.resolve(
           Response.json({
-            protocolVersion: "1.0",
+            protocolVersion: "2.0",
             serverTime: "2026-07-01T10:00:00.000Z",
           }),
         );
       }
       if (url.pathname.endsWith("/lease")) {
         return Promise.resolve(
-          Response.json({ protocolVersion: "1.0", lease: null }),
+          Response.json({ protocolVersion: "2.0", lease: null }),
         );
       }
       if (url.pathname.endsWith("/events")) {
@@ -71,15 +64,7 @@ describe("RunnerHttpTransport", () => {
       token: "runner-token",
       fetch,
     });
-    const activeLease = {
-      jobId: "70b70847-ec1c-4aeb-ac0f-bf7db0328efe",
-      attemptId: "d0da824f-6f6a-4a01-af27-f7448d22bb39",
-      leaseToken: "lease-token",
-      benchmark: { id: "repository-repair", version: "1.0.0" },
-      queuePosition: 0,
-      checkpoint: null,
-      cancellationRequested: false,
-    };
+    const activeLease = runnerLeaseFixture();
 
     await transport.heartbeat();
     await expect(transport.lease()).resolves.toBeNull();
@@ -120,6 +105,47 @@ describe("RunnerHttpTransport", () => {
       "POST /api/v1/runner/completion",
       "POST /api/v1/runner/runners/runner-1/revoke",
     ]);
+  });
+
+  it("treats a replayed checkpoint sequence as already delivered", async () => {
+    const transport = new RunnerHttpTransport({
+      serverUrl: "https://bench.example",
+      token: "runner-token",
+      fetch: () =>
+        Promise.resolve(
+          Response.json(
+            { error: "Checkpoint sequence must advance." },
+            { status: 400 },
+          ),
+        ),
+    });
+
+    await expect(
+      transport.saveCheckpoint(runnerLeaseFixture(), {
+        sequence: 1,
+        resumable: true,
+        state: { cursor: 1 },
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("surfaces checkpoint delivery errors that are not replay conflicts", async () => {
+    const transport = new RunnerHttpTransport({
+      serverUrl: "https://bench.example",
+      token: "runner-token",
+      fetch: () =>
+        Promise.resolve(
+          Response.json({ error: "Service unavailable." }, { status: 503 }),
+        ),
+    });
+
+    await expect(
+      transport.saveCheckpoint(runnerLeaseFixture(), {
+        sequence: 1,
+        resumable: true,
+        state: { cursor: 1 },
+      }),
+    ).rejects.toThrow("Service unavailable.");
   });
 
   it("starts and polls device pairing and surfaces API errors", async () => {

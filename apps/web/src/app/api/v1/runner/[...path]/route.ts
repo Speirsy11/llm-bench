@@ -58,7 +58,7 @@ async function dispatch(
             ],
             maximumSizeInBytes: authorization.maximumSizeInBytes,
             addRandomSuffix: false,
-            allowOverwrite: true,
+            allowOverwrite: false,
             tokenPayload: JSON.stringify({
               runnerId: authorization.runnerId,
               attemptId: payload.attemptId,
@@ -124,5 +124,6 @@ function statusForRunnerUploadError(error: unknown): number {
   ) {
     return 401;
   }
+  if (error.message === "Attempt is already terminal.") return 409;
   return 500;
 }

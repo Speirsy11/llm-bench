@@ -4,6 +4,7 @@ import {
   metricDefinitionForId,
   primaryMetricIdForBenchmark,
   repositoryRepairBenchmark,
+  repositoryRepairWorkload,
 } from "./benchmark-registry";
 
 describe("benchmark registry", () => {
@@ -27,5 +28,14 @@ describe("benchmark registry", () => {
       unit: "count",
       direction: "higher_is_better",
     });
+  });
+
+  it("pins the canonical repository-repair fixture and isolated grader hashes", () => {
+    expect(repositoryRepairWorkload.fixtureContentHash).toBe(
+      "8e42d532e59944b84da613b1043664543196d9ce5adfa838e51477fe3689d9d8",
+    );
+    expect(repositoryRepairWorkload.graderHash).toBe(
+      "d1afab274bbefb8730adace300b9714b23d2e52df12dc1221927f01970b0089a",
+    );
   });
 });

@@ -4,8 +4,13 @@
  * can decrypt it locally.
  */
 
-/** Algorithm tag stored alongside every sealed credential. */
-export const SEALED_BOX_ALGORITHM = "x25519-xsalsa20poly1305-seal" as const;
+import { SEALED_CREDENTIAL_ALGORITHM } from "@llm-bench/contracts";
+
+export { SEALED_CREDENTIAL_ALGORITHM } from "@llm-bench/contracts";
+export type { SealedCredential } from "@llm-bench/contracts";
+
+/** @deprecated Use the canonical shared contract name. */
+export const SEALED_BOX_ALGORITHM = SEALED_CREDENTIAL_ALGORITHM;
 
 /** Raw X25519 key material, base64-encoded for transport and storage. */
 export interface RunnerKeyPair {
@@ -18,18 +23,4 @@ export interface RunnerKeyPair {
 /** A runner key pair together with the runner id it is bound to. */
 export interface RunnerIdentity extends RunnerKeyPair {
   runnerId: string;
-}
-
-/**
- * A credential sealed for exactly one runner. Only ciphertext and routing
- * metadata are stored — the plaintext secret is never persisted here.
- */
-export interface SealedCredential {
-  algorithm: typeof SEALED_BOX_ALGORITHM;
-  /** Runner selected to decrypt this credential. */
-  runnerId: string;
-  /** Fingerprint of the recipient public key the ciphertext was sealed to. */
-  keyFingerprint: string;
-  /** Base64 libsodium sealed box. */
-  ciphertext: string;
 }

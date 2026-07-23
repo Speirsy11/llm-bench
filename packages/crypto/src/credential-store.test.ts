@@ -5,10 +5,11 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { RunnerCredentialStore } from "./credential-store";
 import { generateRunnerKeyPair } from "./keys";
-import { sealCredential } from "./sealed-box";
+import { sealCredential } from "./seal";
 import { SEALED_BOX_ALGORITHM } from "./types";
 
 const roots: string[] = [];
+const RUNNER_ID = "70b70847-ec1c-4aeb-ac0f-bf7db0328efe";
 
 async function newStore(): Promise<RunnerCredentialStore> {
   const root = await mkdtemp(join(tmpdir(), "llm-bench-cred-"));
@@ -46,13 +47,19 @@ describe("RunnerCredentialStore", () => {
     await expect(
       store.saveKeyPair({ publicKey: "", privateKey: "x" }),
     ).rejects.toThrow(/incomplete/);
+    await expect(
+      store.saveKeyPair({
+        publicKey: Buffer.alloc(44).toString("base64"),
+        privateKey: Buffer.alloc(48).toString("base64"),
+      }),
+    ).rejects.toThrow(/raw 32-byte/);
   });
 
   it("round-trips a sealed credential without exposing plaintext", async () => {
     const store = await newStore();
     const runner = await generateRunnerKeyPair();
     const sealed = await sealCredential({
-      runnerId: "runner-a",
+      runnerId: RUNNER_ID,
       recipientPublicKey: runner.publicKey,
       secret: "sk-or-canary-key",
     });
@@ -71,7 +78,7 @@ describe("RunnerCredentialStore", () => {
     const store = await newStore();
     const runner = await generateRunnerKeyPair();
     const sealed = await sealCredential({
-      runnerId: "runner-a",
+      runnerId: RUNNER_ID,
       recipientPublicKey: runner.publicKey,
       secret: "sk-or-canary-key",
     });
@@ -104,6 +111,9 @@ describe("RunnerCredentialStore", () => {
     await store.ensureRoot();
     await writeFile(join(store.root, "runner-key.json"), '{"publicKey":1}\n');
     await expect(store.keyPair()).rejects.toThrow(/malformed/);
+
+    await writeFile(join(store.root, "runner-key.json"), "null\n");
+    await expect(store.keyPair()).rejects.toThrow(/malformed/);
   });
 
   it("propagates unexpected filesystem errors", async () => {
@@ -121,6 +131,24 @@ describe("RunnerCredentialStore", () => {
       join(store.root, "credential-openrouter.json"),
       JSON.stringify({ algorithm: SEALED_BOX_ALGORITHM, runnerId: "a" }) + "\n",
     );
+    await expect(store.sealedCredential("openrouter")).rejects.toThrow(
+      /malformed/,
+    );
+  });
+
+  it("does not relabel a persisted foreign algorithm as canonical", async () => {
+    const store = await newStore();
+    await store.ensureRoot();
+    await writeFile(
+      join(store.root, "credential-openrouter.json"),
+      `${JSON.stringify({
+        algorithm: "foreign-sealed-box",
+        runnerId: RUNNER_ID,
+        keyFingerprint: "AAAAAAAAAAAAAAAAAAAAAA==",
+        ciphertext: "A".repeat(68),
+      })}\n`,
+    );
+
     await expect(store.sealedCredential("openrouter")).rejects.toThrow(
       /malformed/,
     );

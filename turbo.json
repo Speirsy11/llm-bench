@@ -63,6 +63,8 @@
     "LLMBENCH_LIVE_CODEX_MODEL",
     "LLMBENCH_LIVE_CLAUDE",
     "LLMBENCH_LIVE_PI",
+    "LLMBENCH_E2E_ENABLED",
+    "LLMBENCH_E2E_TOKEN",
     "CLAUDE_BINARY",
     "PI_BINARY",
     "npm_lifecycle_event"

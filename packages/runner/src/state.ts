@@ -11,7 +11,9 @@ import { z } from "zod";
 
 import type { RunnerLease, RunnerTerminalRequest } from "@llm-bench/contracts";
 import {
+  RawX25519KeySchema,
   RunnerLeaseSchema,
+  RunnerPublicKeySchema,
   RunnerTerminalRequestSchema,
 } from "@llm-bench/contracts";
 
@@ -30,14 +32,17 @@ export interface ActiveRunnerJob {
     "protocolVersion" | "attemptId" | "leaseToken"
   > | null;
   artifactsUploaded: boolean;
+  executionStarted: boolean;
 }
 
+// X25519 public and private material are both canonical 32-byte Base64 values.
+// Keep the private-key name explicit even though it shares the wire shape.
 const RunnerCredentialsSchema = z.strictObject({
   serverUrl: z.string().min(1),
-  runnerId: z.string().min(1),
+  runnerId: z.uuid(),
   token: z.string().min(1),
-  publicKey: z.string().min(1),
-  privateKey: z.string().min(1),
+  publicKey: RunnerPublicKeySchema,
+  privateKey: RawX25519KeySchema,
 });
 
 const ActiveRunnerJobSchema = z.strictObject({
@@ -48,6 +53,7 @@ const ActiveRunnerJobSchema = z.strictObject({
     leaseToken: true,
   }).nullable(),
   artifactsUploaded: z.boolean(),
+  executionStarted: z.boolean().default(true),
 });
 
 const ProcessIdSchema = z.strictObject({
@@ -58,7 +64,10 @@ export class RunnerStateStore {
   constructor(readonly root: string) {}
 
   async saveCredentials(credentials: RunnerCredentials): Promise<void> {
-    await this.writePrivateFile(this.credentialsPath(), credentials);
+    await this.writePrivateFile(
+      this.credentialsPath(),
+      RunnerCredentialsSchema.parse(credentials),
+    );
   }
 
   async credentials(): Promise<RunnerCredentials | null> {
@@ -78,7 +87,10 @@ export class RunnerStateStore {
   }
 
   async saveActiveJob(active: ActiveRunnerJob): Promise<void> {
-    await this.writePrivateFile(join(this.root, "active-job.json"), active);
+    await this.writePrivateFile(
+      join(this.root, "active-job.json"),
+      ActiveRunnerJobSchema.parse(active),
+    );
   }
 
   async activeJob(): Promise<ActiveRunnerJob | null> {

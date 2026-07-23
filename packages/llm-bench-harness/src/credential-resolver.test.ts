@@ -12,9 +12,12 @@ async function runner(runnerId: string): Promise<RunnerIdentity> {
   return { runnerId, ...(await generateRunnerKeyPair()) };
 }
 
+const RUNNER_A_ID = "00000000-0000-4000-8000-00000000000a";
+const RUNNER_B_ID = "00000000-0000-4000-8000-00000000000b";
+
 describe("CredentialResolver", () => {
   it("resolves a credential sealed for this runner", async () => {
-    const runnerA = await runner("runner-a");
+    const runnerA = await runner(RUNNER_A_ID);
     const sealed = await sealCredential({
       runnerId: runnerA.runnerId,
       recipientPublicKey: runnerA.publicKey,
@@ -28,8 +31,8 @@ describe("CredentialResolver", () => {
   });
 
   it("denies a credential sealed for a different runner", async () => {
-    const runnerA = await runner("runner-a");
-    const runnerB = await runner("runner-b");
+    const runnerA = await runner(RUNNER_A_ID);
+    const runnerB = await runner(RUNNER_B_ID);
     const sealed = await sealCredential({
       runnerId: runnerA.runnerId,
       recipientPublicKey: runnerA.publicKey,
@@ -43,7 +46,7 @@ describe("CredentialResolver", () => {
   });
 
   it("rejects an unregistered requirement", async () => {
-    const resolver = new CredentialResolver(await runner("runner-a"));
+    const resolver = new CredentialResolver(await runner(RUNNER_A_ID));
     await expect(resolver.resolve("openrouter")).rejects.toBeInstanceOf(
       CredentialResolutionError,
     );

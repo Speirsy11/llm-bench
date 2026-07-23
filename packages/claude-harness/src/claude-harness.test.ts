@@ -39,7 +39,15 @@ import { writeFile } from "node:fs/promises";
 const args = process.argv.slice(2);
 process.stdin.resume();
 process.stdin.on("end", async () => {
-  if (!args.includes("workspace-write") || !args.includes("--print")) process.exit(11);
+  const permissionMode = args.indexOf("--permission-mode");
+  if (
+    permissionMode < 0 ||
+    args[permissionMode + 1] !== "acceptEdits" ||
+    !args.includes("--print") ||
+    args.includes("--sandbox") ||
+    args.includes("--cd") ||
+    args.includes("-")
+  ) process.exit(11);
   await writeFile("src/clamp.cjs", "module.exports = () => 2;\\n");
   console.log(JSON.stringify({ type: "system", subtype: "init", session_id: "sess-abc123" }));
   console.log(JSON.stringify({ type: "stream_event", event: { type: "message_start", message: { id: "msg_1", type: "message", role: "assistant", model: "claude-sonnet-4-6", content: [] } } }));
@@ -101,7 +109,16 @@ process.stdin.on("end", async () => {
 const args = process.argv.slice(2);
 process.stdin.resume();
 process.stdin.on("end", () => {
-  if (!args.includes("read-only") || !args.includes("--ephemeral")) process.exit(9);
+  const permissionMode = args.indexOf("--permission-mode");
+  if (
+    permissionMode < 0 ||
+    args[permissionMode + 1] !== "plan" ||
+    !args.includes("--no-session-persistence") ||
+    args.includes("--sandbox") ||
+    args.includes("--cd") ||
+    args.includes("--ephemeral") ||
+    args.includes("-")
+  ) process.exit(9);
   console.log(JSON.stringify({ type: "system", subtype: "init", session_id: "sess-ephemeral" }));
   console.log(JSON.stringify({ type: "assistant", message: { id: "msg_1", type: "message", role: "assistant", content: [{ type: "text", text: "The answer is 42." }], model: "claude-sonnet-4-6", stop_reason: "end_turn", stop_sequence: null, usage: { input_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 5 } }, session_id: "sess-ephemeral" }));
 });
@@ -143,7 +160,9 @@ process.stdin.on("end", () => {
 const args = process.argv.slice(2);
 process.stdin.resume();
 process.stdin.on("end", () => {
-  if (args[0] !== "resume" || !args.includes("--session-id") || !args.includes("thread-123")) process.exit(8);
+  const permissionMode = args.indexOf("--permission-mode");
+  const resume = args.indexOf("--resume");
+  if (permissionMode < 0 || args[permissionMode + 1] !== "acceptEdits" || resume < 0 || args[resume + 1] !== "thread-123") process.exit(8);
   console.log(JSON.stringify({ type: "assistant", message: { id: "msg_2", type: "message", role: "assistant", content: [{ type: "text", text: "Resumed." }], model: "claude-sonnet-4-6", stop_reason: "end_turn", stop_sequence: null, usage: { input_tokens: 15, cache_creation_input_tokens: 0, cache_read_input_tokens: 10, output_tokens: 2 } }, session_id: "thread-123" }));
 });
 `,
@@ -464,7 +483,7 @@ process.stdin.on("end", () => {
     ]);
   });
 
-  it("commands resume with session id from checkpoint", () => {
+  it("resumes the exact session through the supported Claude CLI interface", () => {
     const harness = new ClaudeHarness();
     const cmd = harness.command({
       mode: "agentic",
@@ -487,13 +506,39 @@ process.stdin.on("end", () => {
 
     expect(cmd).toEqual([
       "claude",
-      "resume",
       "--print",
       "--model",
       "claude-sonnet-4-6",
-      "--session-id",
+      "--permission-mode",
+      "acceptEdits",
+      "--output-format",
+      "stream-json",
+      "--resume",
       "sess-resume",
     ]);
+  });
+
+  it("resolves a selected route id to its native model", () => {
+    const harness = new ClaudeHarness({
+      manifest: {
+        id: "claude",
+        version: "test",
+        capabilities: ["response_generation"],
+        modelRoutes: [
+          {
+            id: "claude-route",
+            provider: "claude",
+            model: "claude-sonnet-native",
+          },
+        ],
+      },
+    });
+    expect(
+      harness.command({
+        ...request(),
+        modelRouteId: "claude-route",
+      }),
+    ).toContain("claude-sonnet-native");
   });
 
   it("rejects runner-managed tools before spawning Claude", async () => {
