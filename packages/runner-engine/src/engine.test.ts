@@ -109,6 +109,31 @@ describe("executeAgenticTask", () => {
     });
   }
 
+  /**
+   * Polls for a marker the grader child authors inside its workspace, so tests
+   * can synchronise on real progress instead of a wall-clock guess. The
+   * workspace name is generated per run, so scan for it under the root. Fails
+   * loudly rather than letting a silent timeout weaken the assertion.
+   */
+  async function waitForWorkspaceMarker(
+    root: string,
+    name: string,
+  ): Promise<void> {
+    for (let attempt = 0; attempt < 500; attempt += 1) {
+      const entries = await readdir(root).catch(() => [] as string[]);
+      const found = entries.some(
+        (entry) =>
+          entry.startsWith("llm-bench-workspace-") &&
+          existsSync(path.join(root, entry, name)),
+      );
+      if (found) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error(`timed out waiting for ${name} under ${root}`);
+  }
+
   function counter(values: number[]): () => number {
     let index = 0;
     return () => values[Math.min(index++, values.length - 1)] ?? 0;
@@ -333,8 +358,20 @@ describe("executeAgenticTask", () => {
 
   it("honours cancellation that fires while hidden grading runs", async () => {
     const cancel = new AbortController();
-    const startedAt = Date.now();
-    const pending = execute({
+    const root = await harnessRoot();
+    // The grader authors its own readiness marker so cancellation is tied to
+    // grading actually being underway. A wall-clock delay instead races the
+    // workspace/harness setup, and on a slow host it aborts *before* grading
+    // starts — which still reports "cancelled" and so passes silently, while
+    // leaving the post-grading reclassification path unexercised.
+    const gradingStarted = "grading-started.txt";
+    const pending = executeAgenticTask({
+      jobId: "job-1",
+      limits: LIMITS,
+      workspaceRoot: root,
+      artifactStore: new FileArtifactStore(path.join(root, "artifacts")),
+      eventSpool: new JsonlEventSpool(path.join(root, "events.jsonl")),
+      now: counter([1_000, 1_500]),
       scenario: {
         benchmark: benchmark(),
         task: TASK,
@@ -343,20 +380,28 @@ describe("executeAgenticTask", () => {
           {
             id: "aborts-mid-grading",
             runtime: "node",
-            source:
-              "await new Promise((resolve) => setTimeout(resolve, 2_000));",
+            // The grader child runs under Node's permission model, so the
+            // marker must live inside the workspace it is allowed to write.
+            source: `require("node:fs").writeFileSync(
+  path.join(workspaceRoot, ${JSON.stringify(gradingStarted)}),
+  "started",
+);
+await new Promise((resolve) => setTimeout(resolve, 2_000));`,
           },
         ],
       },
       harness: writingHarness("fixed"),
       cancel: cancel.signal,
     });
-    setTimeout(() => cancel.abort(), 20);
+    await waitForWorkspaceMarker(root, gradingStarted);
+    const abortedAt = Date.now();
+    cancel.abort();
     const result = await pending;
 
     expect(result.status).toBe("cancelled");
     expect(result.grade).toBeNull();
-    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    // The 2s hidden test must not be waited out once cancellation lands.
+    expect(Date.now() - abortedAt).toBeLessThan(1_000);
     expect(result.observations).toEqual([
       { metricId: "hidden_test_pass_ratio", value: null },
     ]);
