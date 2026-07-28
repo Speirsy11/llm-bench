@@ -1,11 +1,28 @@
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { and, asc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
 
 import type {
   Capability,
   RunnerCheckpoint,
-  RunnerPairingStartRequest,
+  RunnerExecution,
   RunnerTerminalRequest,
+} from "@llm-bench/contracts";
+import {
+  LLMBENCH_REPOSITORY_TOOLS,
+  RUNNER_PROTOCOL_VERSION,
+  RunnerExecutionSchema,
+  RunnerPairingStartRequestSchema,
+  targetCompatibilityBlockers,
 } from "@llm-bench/contracts";
 
 import type {
@@ -59,7 +76,10 @@ export class PostgresRunnerProtocolStore implements RunnerProtocolStore {
     userCodeHash: string,
   ): Promise<RunnerPairingRecord | null> {
     const row = await this.db.query.runnerPairings.findFirst({
-      where: eq(runnerPairings.userCodeHash, userCodeHash),
+      where: and(
+        eq(runnerPairings.userCodeHash, userCodeHash),
+        sql`${runnerPairings.request}->>'protocolVersion' = ${RUNNER_PROTOCOL_VERSION}`,
+      ),
     });
     return row ? pairingFromRow(row) : null;
   }
@@ -68,21 +88,30 @@ export class PostgresRunnerProtocolStore implements RunnerProtocolStore {
     deviceCodeHash: string,
   ): Promise<RunnerPairingRecord | null> {
     const row = await this.db.query.runnerPairings.findFirst({
-      where: eq(runnerPairings.deviceCodeHash, deviceCodeHash),
+      where: and(
+        eq(runnerPairings.deviceCodeHash, deviceCodeHash),
+        sql`${runnerPairings.request}->>'protocolVersion' = ${RUNNER_PROTOCOL_VERSION}`,
+      ),
     });
     return row ? pairingFromRow(row) : null;
   }
 
   async findRunnerByTokenHash(tokenHash: string): Promise<PairedRunner | null> {
     const row = await this.db.query.runners.findFirst({
-      where: eq(runners.tokenHash, tokenHash),
+      where: and(
+        eq(runners.tokenHash, tokenHash),
+        eq(runners.protocolVersion, RUNNER_PROTOCOL_VERSION),
+      ),
     });
     return row ? runnerFromRow(row) : null;
   }
 
   async findRunnerById(runnerId: string): Promise<PairedRunner | null> {
     const row = await this.db.query.runners.findFirst({
-      where: eq(runners.id, runnerId),
+      where: and(
+        eq(runners.id, runnerId),
+        eq(runners.protocolVersion, RUNNER_PROTOCOL_VERSION),
+      ),
     });
     return row ? runnerFromRow(row) : null;
   }
@@ -98,7 +127,13 @@ export class PostgresRunnerProtocolStore implements RunnerProtocolStore {
     await this.db
       .update(runners)
       .set({ status: "online", lastSeenAt })
-      .where(and(eq(runners.id, runnerId), isNull(runners.revokedAt)));
+      .where(
+        and(
+          eq(runners.id, runnerId),
+          eq(runners.protocolVersion, RUNNER_PROTOCOL_VERSION),
+          isNull(runners.revokedAt),
+        ),
+      );
   }
 
   async approvePairing(
@@ -111,7 +146,7 @@ export class PostgresRunnerProtocolStore implements RunnerProtocolStore {
         ownerId: runner.ownerId,
         name: runner.name,
         publicKey: runner.publicKey,
-        protocolVersion: "1.0",
+        protocolVersion: RUNNER_PROTOCOL_VERSION,
         capabilities: runner.capabilities,
         environment: runner.environment,
       });
@@ -169,13 +204,18 @@ export class PostgresRunnerJobStore implements RunnerJobStore {
     if (!job.experimentId || !job.targetId) {
       throw new Error("Persisted jobs require an experiment and target.");
     }
+    const execution = parsePersistedExecution(job.execution);
     await this.db.insert(jobs).values({
       id: job.id,
       experimentId: job.experimentId,
       targetId: job.targetId,
       runnerId: job.assignedRunnerId,
+      credentialProfileId: execution.credential?.profileId ?? null,
       benchmarkId: job.benchmark.id,
       benchmarkVersion: job.benchmark.version,
+      execution,
+      workload: execution.workload,
+      limits: execution.limits,
       requiredCapabilities: job.requiredCapabilities,
       status: job.status,
       cancellationRequested: job.cancellationRequested,
@@ -189,11 +229,18 @@ export class PostgresRunnerJobStore implements RunnerJobStore {
     leaseTokenHash,
   }: Parameters<RunnerJobStore["claimNext"]>[0]) {
     return this.db.transaction(async (transaction) => {
-      await transaction
-        .select({ id: runners.id })
+      const [lockedRunner] = await transaction
+        .select({
+          id: runners.id,
+          revokedAt: runners.revokedAt,
+          status: runners.status,
+        })
         .from(runners)
         .where(eq(runners.id, runner.id))
         .for("update");
+      const runnerCanClaim =
+        lockedRunner?.revokedAt === null && lockedRunner.status !== "disabled";
+      if (!runnerCanClaim) return null;
 
       const active = await transaction
         .select({ id: attempts.id })
@@ -213,65 +260,98 @@ export class PostgresRunnerJobStore implements RunnerJobStore {
         .limit(1);
       if (active.length > 0) return null;
 
-      const [candidate] = await transaction
-        .select({ job: jobs })
-        .from(jobs)
-        .innerJoin(experiments, eq(experiments.id, jobs.experimentId))
-        .where(
-          and(
-            eq(jobs.status, "queued"),
-            eq(experiments.ownerId, runner.ownerId),
-            or(isNull(jobs.runnerId), eq(jobs.runnerId, runner.id)),
-            sql`${jobs.benchmarkId} is not null`,
-            sql`${jobs.benchmarkVersion} is not null`,
-            sql`${jobs.requiredCapabilities} <@ ${JSON.stringify(runner.capabilities)}::jsonb`,
-          ),
-        )
-        .orderBy(asc(jobs.queuePosition))
-        .limit(1)
-        .for("update", { skipLocked: true });
-      if (!candidate) return null;
+      const skippedJobIds: string[] = [];
+      while (true) {
+        const [candidate] = await transaction
+          .select({ job: jobs })
+          .from(jobs)
+          .innerJoin(experiments, eq(experiments.id, jobs.experimentId))
+          .where(
+            and(
+              eq(jobs.status, "queued"),
+              eq(experiments.ownerId, runner.ownerId),
+              or(isNull(jobs.runnerId), eq(jobs.runnerId, runner.id)),
+              sql`${jobs.requiredCapabilities} <@ ${JSON.stringify(runner.capabilities)}::jsonb`,
+              skippedJobIds.length > 0
+                ? notInArray(jobs.id, skippedJobIds)
+                : undefined,
+            ),
+          )
+          .orderBy(asc(jobs.queuePosition))
+          .limit(1)
+          .for("update", { of: jobs, skipLocked: true });
+        if (!candidate) return null;
 
-      const countRows = await transaction
-        .select({ count: sql<number>`count(*)::int` })
-        .from(attempts)
-        .where(eq(attempts.jobId, candidate.job.id));
-      // COUNT always returns exactly one row.
-      const count = (countRows as [{ count: number }])[0].count;
-      await transaction
-        .update(jobs)
-        .set({
-          status: "leased",
-          runnerId: runner.id,
-          updatedAt: new Date(),
-        })
-        .where(eq(jobs.id, candidate.job.id));
-      const attemptRows = await transaction
-        .insert(attempts)
-        .values({
-          id: attemptId,
-          jobId: candidate.job.id,
-          number: count + 1,
-          status: "leased",
-          runnerId: runner.id,
-          leaseTokenHash,
-        })
-        .returning();
-      // INSERT ... RETURNING always returns the inserted attempt.
-      const insertedAttempt = (
-        attemptRows as [typeof attempts.$inferSelect]
-      )[0];
-      return {
-        job: jobFromRow(
-          {
-            ...candidate.job,
+        let execution: RunnerExecution;
+        try {
+          execution = parsePersistedExecution(candidate.job.execution);
+          if (!candidate.job.benchmarkId || !candidate.job.benchmarkVersion) {
+            throw new Error("Queued job is missing benchmark metadata.");
+          }
+          if (
+            targetCompatibilityBlockers(
+              execution.target,
+              candidate.job.requiredCapabilities as Capability[],
+              LLMBENCH_REPOSITORY_TOOLS,
+              runner.environment.harnessVersions,
+            ).length > 0
+          ) {
+            throw new Error("Queued job target is incompatible.");
+          }
+        } catch {
+          await transaction
+            .update(jobs)
+            .set({ status: "failed", updatedAt: new Date() })
+            .where(eq(jobs.id, candidate.job.id));
+          continue;
+        }
+        if (!executionCanRunOnRunner(execution, runner)) {
+          skippedJobIds.push(candidate.job.id);
+          continue;
+        }
+
+        const countRows = await transaction
+          .select({ count: sql<number>`count(*)::int` })
+          .from(attempts)
+          .where(eq(attempts.jobId, candidate.job.id));
+        // COUNT always returns exactly one row.
+        const count = (countRows as [{ count: number }])[0].count;
+        await transaction
+          .update(jobs)
+          .set({
             status: "leased",
             runnerId: runner.id,
-          },
-          runner.ownerId,
-        ),
-        attempt: attemptFromRow(insertedAttempt),
-      };
+            updatedAt: new Date(),
+          })
+          .where(eq(jobs.id, candidate.job.id));
+        const attemptRows = await transaction
+          .insert(attempts)
+          .values({
+            id: attemptId,
+            jobId: candidate.job.id,
+            number: count + 1,
+            status: "leased",
+            runnerId: runner.id,
+            leaseTokenHash,
+          })
+          .returning();
+        // INSERT ... RETURNING always returns the inserted attempt.
+        const insertedAttempt = (
+          attemptRows as [typeof attempts.$inferSelect]
+        )[0];
+        return {
+          job: jobFromRow(
+            {
+              ...candidate.job,
+              status: "leased",
+              runnerId: runner.id,
+            },
+            runner.ownerId,
+            execution,
+          ),
+          attempt: attemptFromRow(insertedAttempt),
+        };
+      }
     });
   }
 
@@ -284,7 +364,10 @@ export class PostgresRunnerJobStore implements RunnerJobStore {
 
   async findJob(jobId: string): Promise<QueuedRunnerJob | null> {
     const [row] = await this.db
-      .select({ job: jobs, ownerId: experiments.ownerId })
+      .select({
+        job: jobs,
+        ownerId: experiments.ownerId,
+      })
       .from(jobs)
       .innerJoin(experiments, eq(experiments.id, jobs.experimentId))
       .where(eq(jobs.id, jobId))
@@ -400,7 +483,7 @@ function pairingFromRow(
   return {
     deviceCodeHash: row.deviceCodeHash,
     userCodeHash: row.userCodeHash,
-    request: row.request as unknown as RunnerPairingStartRequest,
+    request: RunnerPairingStartRequestSchema.parse(row.request),
     expiresAt: row.expiresAt,
     ownerId: row.ownerId,
     runnerId: row.runnerId,
@@ -505,6 +588,7 @@ function runnerFromRow(row: typeof runners.$inferSelect): PairedRunner {
 function jobFromRow(
   row: typeof jobs.$inferSelect,
   ownerId: string,
+  execution = parsePersistedExecution(row.execution),
 ): QueuedRunnerJob {
   if (!row.benchmarkId || !row.benchmarkVersion) {
     throw new Error("Queued job is missing benchmark metadata.");
@@ -514,6 +598,7 @@ function jobFromRow(
     ownerId,
     benchmark: { id: row.benchmarkId, version: row.benchmarkVersion },
     requiredCapabilities: row.requiredCapabilities as Capability[],
+    execution,
     status: row.status,
     position: row.queuePosition,
     assignedRunnerId: row.runnerId,
@@ -522,6 +607,30 @@ function jobFromRow(
     targetId: row.targetId,
     retryOfJobId: row.retryOfJobId,
   };
+}
+
+function parsePersistedExecution(value: unknown): RunnerExecution {
+  const execution = RunnerExecutionSchema.parse(value);
+  if (execution.target.harness.id === "llmbench" && !execution.credential) {
+    throw new Error("LLMBench execution requires a sealed credential.");
+  }
+  if (execution.target.harness.id !== "llmbench" && execution.credential) {
+    throw new Error(
+      "Native harness execution must not reference a hosted credential.",
+    );
+  }
+  return execution;
+}
+
+function executionCanRunOnRunner(
+  execution: RunnerExecution,
+  runner: PairedRunner,
+): boolean {
+  if (execution.target.harness.id !== "llmbench") return true;
+  return (
+    execution.credential?.sealed.runnerId === runner.id &&
+    execution.credential.provider === execution.target.modelRoute.provider
+  );
 }
 
 function attemptFromRow(row: typeof attempts.$inferSelect): RunnerAttempt {

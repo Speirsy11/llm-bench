@@ -2,38 +2,53 @@
 
 import { revalidatePath } from "next/cache";
 
+import { SealedCredentialSchema } from "@llm-bench/contracts";
+
 import { getDashboardActor } from "./auth";
-import { defaultDashboardMatrix, selectedDashboardModelRoutes } from "./matrix";
+import { validateMaskedSecret } from "./credential-input";
+import {
+  dashboardMatrixForHarness,
+  selectedDashboardModelRoutes,
+} from "./matrix";
 import { getDashboardControlPlane } from "./runtime";
 
 export async function saveCredentialProfileAction(formData: FormData) {
   const actor = await getDashboardActor();
   const runnerId = requiredString(formData, "runnerId");
+  const sealedCredential = SealedCredentialSchema.parse({
+    algorithm: requiredString(formData, "algorithm"),
+    runnerId,
+    keyFingerprint: requiredString(formData, "keyFingerprint"),
+    ciphertext: requiredString(formData, "ciphertext"),
+  });
   await getDashboardControlPlane().dashboard.saveCredentialProfile(actor, {
     label: requiredString(formData, "label"),
     provider: requiredString(formData, "provider"),
     runnerId,
-    maskedSecret: requiredString(formData, "maskedSecret"),
-    sealedCredential: {
-      algorithm: "x25519-xsalsa20-poly1305-sealed-box",
-      runnerId,
-      keyFingerprint: requiredString(formData, "keyFingerprint"),
-      ciphertext: requiredString(formData, "ciphertext"),
-    },
+    maskedSecret: validateMaskedSecret(
+      requiredString(formData, "maskedSecret"),
+    ),
+    sealedCredential,
   });
   revalidatePath("/dashboard");
 }
 
 export async function launchExperimentAction(formData: FormData) {
   const actor = await getDashboardActor();
-  const matrix = defaultDashboardMatrix();
-  const selectedRoutes = selectedDashboardModelRoutes(
-    formData.getAll("modelRoute").map(String),
-  );
+  const harnessId = requiredString(formData, "harness");
+  const matrix = dashboardMatrixForHarness(harnessId);
+  const selectedRoutes =
+    harnessId === "llmbench"
+      ? selectedDashboardModelRoutes(formData.getAll("modelRoute").map(String))
+      : matrix.modelRoutes;
   await getDashboardControlPlane().dashboard.launchExperiment(actor, {
     name: requiredString(formData, "name"),
     runnerId: requiredString(formData, "runnerId"),
-    credentialProfileId: requiredString(formData, "credentialProfileId"),
+    ...(harnessId === "llmbench"
+      ? {
+          credentialProfileId: requiredString(formData, "credentialProfileId"),
+        }
+      : {}),
     spendConfirmed: formData.get("spendConfirmed") === "on",
     modelRoutes: selectedRoutes,
     harnesses: matrix.harnesses,

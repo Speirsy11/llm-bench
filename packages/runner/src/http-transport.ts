@@ -1,6 +1,7 @@
 import type { infer as zInfer, ZodType } from "zod";
 
 import type {
+  Capability,
   RunnerCheckpoint,
   RunnerEnvironment,
   RunnerLease,
@@ -70,15 +71,27 @@ export class RunnerHttpTransport implements RunnerTransport {
     lease: RunnerLease,
     checkpoint: RunnerCheckpoint,
   ): Promise<void> {
-    await this.request("checkpoints", {
-      method: "POST",
-      body: {
-        protocolVersion: RUNNER_PROTOCOL_VERSION,
-        attemptId: lease.attemptId,
-        leaseToken: lease.leaseToken,
-        checkpoint,
-      },
-    });
+    try {
+      await this.request("checkpoints", {
+        method: "POST",
+        body: {
+          protocolVersion: RUNNER_PROTOCOL_VERSION,
+          attemptId: lease.attemptId,
+          leaseToken: lease.leaseToken,
+          checkpoint,
+        },
+      });
+    } catch (error) {
+      // A response can be lost after the server commits the checkpoint. Replays
+      // of that same (or an older) sequence are therefore idempotent success.
+      if (
+        error instanceof Error &&
+        error.message === "Checkpoint sequence must advance."
+      ) {
+        return;
+      }
+      throw error;
+    }
   }
 
   async cancellationStatus(lease: RunnerLease) {
@@ -137,7 +150,7 @@ export async function startRunnerPairing(
     serverUrl: string;
     name: string;
     publicKey: string;
-    capabilities: ("workspaces" | "files")[];
+    capabilities: Capability[];
     environment: RunnerEnvironment;
   },
   fetch: Fetch = globalThis.fetch,

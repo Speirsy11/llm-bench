@@ -385,4 +385,31 @@ process.exit(10);
 
     expect(result).toMatchObject({ status: "failed", error: expected });
   });
+
+  it("resolves a selected route id to its native model", () => {
+    const harness = new CodexHarness({
+      manifest: {
+        id: "codex",
+        version: "test",
+        capabilities: ["response_generation"],
+        modelRoutes: [
+          { id: "codex-route", provider: "codex", model: "gpt-5.4-native" },
+        ],
+      },
+    });
+    expect(
+      harness.command({
+        mode: "response",
+        jobId: "job-route",
+        caseId: "case-route",
+        prompt: "Answer.",
+        workspaceRoot: "/tmp/workspace",
+        benchmark: { id: "response", version: "1.0.0" },
+        modelRouteId: "codex-route",
+        toolset: { id: "none", version: "1.0.0", tools: [], mcpProfiles: [] },
+        limits: { maxDurationMs: 1_000, maxToolCalls: 0, maxTokens: 100 },
+        checkpoint: null,
+      }),
+    ).toContain("gpt-5.4-native");
+  });
 });

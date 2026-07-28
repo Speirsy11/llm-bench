@@ -8,8 +8,13 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 
+import {
+  RawX25519KeySchema,
+  RunnerPublicKeySchema,
+  SealedCredentialSchema,
+} from "@llm-bench/contracts";
+
 import type { RunnerKeyPair, SealedCredential } from "./types";
-import { SEALED_BOX_ALGORITHM } from "./types";
 
 /**
  * Protected on-disk store for a runner's private key and the sealed credentials
@@ -26,52 +31,44 @@ export class RunnerCredentialStore {
   }
 
   async saveKeyPair(keyPair: RunnerKeyPair): Promise<void> {
-    if (keyPair.publicKey.length === 0 || keyPair.privateKey.length === 0) {
-      throw new Error("Runner key pair is incomplete.");
+    const parsed = parseKeyPair(keyPair);
+    if (!parsed) {
+      throw new Error(
+        "Runner key pair is incomplete or not canonical raw 32-byte X25519 material.",
+      );
     }
-    await this.writePrivateFile(this.keyPairPath(), keyPair);
+    await this.writePrivateFile(this.keyPairPath(), parsed);
   }
 
   async keyPair(): Promise<RunnerKeyPair | null> {
     const raw = await this.readPrivate(this.keyPairPath());
-    if (raw === null) return null;
-    const value = raw as Partial<RunnerKeyPair>;
-    if (
-      typeof value.publicKey !== "string" ||
-      typeof value.privateKey !== "string"
-    ) {
+    if (raw === undefined) return null;
+    const value = parseKeyPair(raw);
+    if (!value) {
       throw new Error("Runner key pair file is malformed; re-pair the runner.");
     }
-    return { publicKey: value.publicKey, privateKey: value.privateKey };
+    return value;
   }
 
   async saveSealedCredential(
     name: string,
     sealed: SealedCredential,
   ): Promise<void> {
-    if ((sealed.algorithm as string) !== SEALED_BOX_ALGORITHM) {
+    const parsed = SealedCredentialSchema.safeParse(sealed);
+    if (!parsed.success) {
       throw new Error("Refusing to store credential with unknown algorithm.");
     }
-    await this.writePrivateFile(this.sealedPath(name), sealed);
+    await this.writePrivateFile(this.sealedPath(name), parsed.data);
   }
 
   async sealedCredential(name: string): Promise<SealedCredential | null> {
     const raw = await this.readPrivate(this.sealedPath(name));
-    if (raw === null) return null;
-    const value = raw as Partial<SealedCredential>;
-    if (
-      typeof value.runnerId !== "string" ||
-      typeof value.keyFingerprint !== "string" ||
-      typeof value.ciphertext !== "string"
-    ) {
+    if (raw === undefined) return null;
+    const value = SealedCredentialSchema.safeParse(raw);
+    if (!value.success) {
       throw new Error(`Sealed credential ${name} is malformed.`);
     }
-    return {
-      algorithm: SEALED_BOX_ALGORITHM,
-      runnerId: value.runnerId,
-      keyFingerprint: value.keyFingerprint,
-      ciphertext: value.ciphertext,
-    };
+    return value.data;
   }
 
   async deleteSealedCredential(name: string): Promise<void> {
@@ -104,10 +101,20 @@ export class RunnerCredentialStore {
   private async readPrivate(path: string): Promise<unknown> {
     const raw = await readFile(path, "utf8").catch(
       (error: NodeJS.ErrnoException) => {
-        if (error.code === "ENOENT") return null;
+        if (error.code === "ENOENT") return undefined;
         throw error;
       },
     );
-    return raw === null ? null : JSON.parse(raw);
+    return raw === undefined ? undefined : JSON.parse(raw);
   }
+}
+
+function parseKeyPair(value: unknown): RunnerKeyPair | null {
+  if (typeof value !== "object" || value === null) return null;
+  const candidate = value as Partial<RunnerKeyPair>;
+  const publicKey = RunnerPublicKeySchema.safeParse(candidate.publicKey);
+  const privateKey = RawX25519KeySchema.safeParse(candidate.privateKey);
+  return publicKey.success && privateKey.success
+    ? { publicKey: publicKey.data, privateKey: privateKey.data }
+    : null;
 }

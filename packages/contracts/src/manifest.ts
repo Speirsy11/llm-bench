@@ -54,6 +54,7 @@ export const LimitsSchema = z.strictObject({
   maxDurationMs: z.number().int().positive(),
   maxToolCalls: z.number().int().nonnegative(),
   maxTokens: z.number().int().positive(),
+  maxTurns: z.number().int().positive().optional(),
 });
 export type Limits = z.infer<typeof LimitsSchema>;
 

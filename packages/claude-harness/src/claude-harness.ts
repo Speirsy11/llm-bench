@@ -112,25 +112,32 @@ export class ClaudeHarness extends JsonlProcessHarnessAdapter<ClaudeEvent> {
   override command(request: ClaudeRunRequest): [string, ...string[]] {
     this.validateRequest(request);
     const binary = this.options.binary ?? "claude";
-    const common = ["--print", "--model", request.modelRouteId];
+    const permissionMode = request.mode === "agentic" ? "acceptEdits" : "plan";
+    const common = [
+      "--print",
+      "--model",
+      this.modelFor(request.modelRouteId),
+      "--permission-mode",
+      permissionMode,
+      "--output-format",
+      "stream-json",
+    ];
     const sessionId = sessionIdFrom(request.checkpoint);
     if (sessionId) {
-      return [binary, "resume", ...common, "--session-id", sessionId];
+      return [binary, ...common, "--resume", sessionId];
     }
-    const sandbox =
-      request.mode === "agentic" ? "workspace-write" : "read-only";
     return [
       binary,
       ...common,
-      "--sandbox",
-      sandbox,
-      "--cd",
-      request.workspaceRoot,
-      ...(this.options.ephemeral ? ["--ephemeral"] : []),
-      "--output-format",
-      "stream-json",
-      "-",
+      ...(this.options.ephemeral ? ["--no-session-persistence"] : []),
     ];
+  }
+
+  private modelFor(routeId: string): string {
+    return (
+      this.manifest.modelRoutes.find((route) => route.id === routeId)?.model ??
+      routeId
+    );
   }
 
   private validateRequest(request: ClaudeRunRequest): void {

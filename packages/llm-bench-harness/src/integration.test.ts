@@ -12,6 +12,8 @@ async function runner(runnerId: string): Promise<RunnerIdentity> {
 }
 
 const OPENROUTER_KEY = "sk-or-canary-integration-key";
+const RUNNER_A_ID = "00000000-0000-4000-8000-00000000000a";
+const RUNNER_B_ID = "00000000-0000-4000-8000-00000000000b";
 
 function fixtureFetch(capture: { authorization?: string; body?: string }) {
   return (input: string, init: RequestInit): Promise<Response> => {
@@ -40,7 +42,7 @@ function fixtureFetch(capture: { authorization?: string; body?: string }) {
 
 describe("sealed credential drives a fixture-backed harness turn", () => {
   it("GREEN: runner A decrypts in memory and completes a turn", async () => {
-    const runnerA = await runner("runner-a");
+    const runnerA = await runner(RUNNER_A_ID);
     const sealed = await sealCredential({
       runnerId: runnerA.runnerId,
       recipientPublicKey: runnerA.publicKey,
@@ -81,8 +83,8 @@ describe("sealed credential drives a fixture-backed harness turn", () => {
   });
 
   it("RED: a different runner cannot resolve the credential to drive a call", async () => {
-    const runnerA = await runner("runner-a");
-    const runnerB = await runner("runner-b");
+    const runnerA = await runner(RUNNER_A_ID);
+    const runnerB = await runner(RUNNER_B_ID);
     const sealed = await sealCredential({
       runnerId: runnerA.runnerId,
       recipientPublicKey: runnerA.publicKey,

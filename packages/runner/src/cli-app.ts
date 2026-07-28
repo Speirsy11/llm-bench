@@ -1,4 +1,5 @@
 import type {
+  Capability,
   RunnerEnvironment,
   RunnerPairingPollResponse,
   RunnerPairingStartResponse,
@@ -6,7 +7,7 @@ import type {
 
 import type { RunnerCredentials, RunnerStateStore } from "./state";
 
-export type RunnerCapability = "workspaces" | "files";
+export type RunnerCapability = Capability;
 
 export interface CapabilityProbe {
   capabilities: RunnerCapability[];
@@ -17,7 +18,7 @@ export interface CapabilityProbe {
 interface CliOptions {
   state: RunnerStateStore;
   output(line: string): void;
-  keyPair(): { publicKey: string; privateKey: string };
+  keyPair(): Promise<{ publicKey: string; privateKey: string }>;
   probe(): CapabilityProbe;
   pairing: {
     start(input: {
@@ -91,8 +92,8 @@ export class RunnerCli {
     if (!serverUrl || !name) {
       throw new Error("Usage: llm-bench-runner login <server-url> <name>");
     }
-    const keys = this.options.keyPair();
-    const probe = this.options.probe();
+    const keys = await this.options.keyPair();
+    const probe = this.requireHealthyProbe();
     const pairing = await this.options.pairing.start({
       serverUrl,
       name,
@@ -134,6 +135,7 @@ export class RunnerCli {
 
   private async start(): Promise<void> {
     const credentials = await this.requiredCredentials();
+    this.requireHealthyProbe();
     const existing = await this.options.state.processId();
     if (existing && this.options.lifecycle.isRunning(existing)) {
       throw new Error(`Runner is already running (pid ${existing}).`);
@@ -176,5 +178,15 @@ export class RunnerCli {
     const credentials = await this.options.state.credentials();
     if (!credentials) throw new Error("Runner is not logged in.");
     return credentials;
+  }
+
+  private requireHealthyProbe(): CapabilityProbe {
+    const probe = this.options.probe();
+    if (probe.issues.length > 0) {
+      throw new Error(
+        `Runner prerequisites failed: ${probe.issues.join("; ")}`,
+      );
+    }
+    return probe;
   }
 }

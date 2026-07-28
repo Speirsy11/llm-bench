@@ -12,7 +12,12 @@ export default mergeConfig(
         provider: "v8",
         reporter: ["text", "lcov"],
         include: ["src/**/*.ts"],
-        exclude: ["src/**/*.test.ts", "src/index.ts", "src/cli.ts"],
+        exclude: [
+          "src/**/*.test.ts",
+          "src/test-fixture.ts",
+          "src/index.ts",
+          "src/cli.ts",
+        ],
         thresholds: {
           statements: 100,
           branches: 100,

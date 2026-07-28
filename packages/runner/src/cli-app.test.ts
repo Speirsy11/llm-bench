@@ -8,6 +8,8 @@ import { RunnerStateStore } from "./state";
 
 describe("RunnerCli", () => {
   const roots: string[] = [];
+  const rawKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+  const runnerId = "70b70847-ec1c-4aeb-ac0f-bf7db0328efe";
 
   afterEach(async () => {
     await Promise.all(
@@ -24,7 +26,11 @@ describe("RunnerCli", () => {
     const cli = new RunnerCli({
       state,
       output: (line) => output.push(line),
-      keyPair: () => ({ publicKey: "public-key", privateKey: "private-key" }),
+      keyPair: () =>
+        Promise.resolve({
+          publicKey: rawKey,
+          privateKey: rawKey,
+        }),
       probe: () => ({
         capabilities: ["workspaces", "files"],
         environment: {
@@ -51,7 +57,7 @@ describe("RunnerCli", () => {
         poll: () =>
           Promise.resolve({
             status: "approved" as const,
-            runnerId: "70b70847-ec1c-4aeb-ac0f-bf7db0328efe",
+            runnerId,
             token: "runner-token",
           }),
       },
@@ -77,7 +83,7 @@ describe("RunnerCli", () => {
     );
 
     await cli.run(["logout"]);
-    expect(revoked).toEqual(["70b70847-ec1c-4aeb-ac0f-bf7db0328efe"]);
+    expect(revoked).toEqual([runnerId]);
     expect(await state.credentials()).toBeNull();
   });
 
@@ -87,17 +93,17 @@ describe("RunnerCli", () => {
     const state = new RunnerStateStore(join(root, "state"));
     await state.saveCredentials({
       serverUrl: "https://bench.example",
-      runnerId: "runner-1",
+      runnerId,
       token: "runner-token",
-      publicKey: "public-key",
-      privateKey: "private-key",
+      publicKey: rawKey,
+      privateKey: rawKey,
     });
     const output: string[] = [];
     const running = new Set<number>();
     const cli = new RunnerCli({
       state,
       output: (line) => output.push(line),
-      keyPair: () => ({ publicKey: "", privateKey: "" }),
+      keyPair: () => Promise.resolve({ publicKey: "", privateKey: "" }),
       probe: () => ({
         capabilities: ["workspaces", "files"],
         environment: {
@@ -163,7 +169,7 @@ describe("RunnerCli", () => {
     const cli = new RunnerCli({
       state,
       output: () => undefined,
-      keyPair: () => ({ publicKey: "public", privateKey: "private" }),
+      keyPair: () => Promise.resolve({ publicKey: rawKey, privateKey: rawKey }),
       probe: () => ({
         capabilities: ["workspaces", "files"],
         environment: {
@@ -196,7 +202,7 @@ describe("RunnerCli", () => {
           }
           return Promise.resolve({
             status: "approved" as const,
-            runnerId: "runner-1",
+            runnerId,
             token: "token",
           });
         },
@@ -236,7 +242,12 @@ describe("RunnerCli", () => {
     await cli.run(["stop"]);
     probeIssues = ["Node unavailable"];
     await expect(cli.run(["doctor"])).rejects.toThrow("Node unavailable");
+    await expect(cli.run(["start"])).rejects.toThrow("Node unavailable");
+    await expect(
+      cli.run(["login", "https://bench.example", "unsupported"]),
+    ).rejects.toThrow("Node unavailable");
 
+    probeIssues = [];
     expired = true;
     pending = true;
     await expect(

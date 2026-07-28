@@ -14,6 +14,8 @@ import { RunnerStateStore } from "./state";
 
 describe("RunnerStateStore", () => {
   const roots: string[] = [];
+  const rawKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+  const runnerId = "70b70847-ec1c-4aeb-ac0f-bf7db0328efe";
 
   afterEach(async () => {
     await Promise.all(
@@ -27,10 +29,10 @@ describe("RunnerStateStore", () => {
     const store = new RunnerStateStore(join(root, "state"));
     const credentials = {
       serverUrl: "https://bench.example",
-      runnerId: "runner-1",
+      runnerId,
       token: "runner-token",
-      publicKey: "public-key",
-      privateKey: "private-key",
+      publicKey: rawKey,
+      privateKey: rawKey,
     };
 
     await store.saveCredentials(credentials);
@@ -67,16 +69,54 @@ describe("RunnerStateStore", () => {
     );
   });
 
+  it("rejects invalid credentials before persisting them", async () => {
+    const root = await mkdtemp(join(tmpdir(), "llm-bench-runner-"));
+    roots.push(root);
+    const store = new RunnerStateStore(join(root, "state"));
+
+    await expect(
+      store.saveCredentials({
+        serverUrl: "https://bench.example",
+        runnerId: "not-a-runner-uuid",
+        token: "runner-token",
+        publicKey: rawKey,
+        privateKey: rawKey,
+      }),
+    ).rejects.toThrow();
+    await expect(store.credentials()).resolves.toBeNull();
+  });
+
+  it("rejects legacy DER key state with actionable re-login guidance", async () => {
+    const root = await mkdtemp(join(tmpdir(), "llm-bench-runner-"));
+    roots.push(root);
+    const store = new RunnerStateStore(join(root, "state"));
+    await store.ensureRoot();
+    await writeFile(
+      join(root, "state", "credentials.json"),
+      `${JSON.stringify({
+        serverUrl: "https://bench.example",
+        runnerId,
+        token: "runner-token",
+        publicKey: Buffer.alloc(44).toString("base64"),
+        privateKey: Buffer.alloc(48).toString("base64"),
+      })}\n`,
+    );
+
+    await expect(store.credentials()).rejects.toThrow(
+      "remove it and run login/start again",
+    );
+  });
+
   it("replaces private state files atomically without leaving temp files", async () => {
     const root = await mkdtemp(join(tmpdir(), "llm-bench-runner-"));
     roots.push(root);
     const store = new RunnerStateStore(join(root, "state"));
     const credentials = {
       serverUrl: "https://bench.example",
-      runnerId: "runner-1",
+      runnerId,
       token: "runner-token",
-      publicKey: "public-key",
-      privateKey: "private-key",
+      publicKey: rawKey,
+      privateKey: rawKey,
     };
 
     await store.saveCredentials(credentials);

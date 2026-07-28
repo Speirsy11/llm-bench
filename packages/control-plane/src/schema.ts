@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -15,6 +16,8 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+
+import type { Limits, RunnerExecution } from "@llm-bench/contracts";
 
 export const experimentVisibility = pgEnum("experiment_visibility", [
   "private",
@@ -118,7 +121,7 @@ export const runners = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     name: text().notNull(),
     publicKey: text("public_key").notNull(),
-    protocolVersion: text("protocol_version").default("1.0").notNull(),
+    protocolVersion: text("protocol_version").default("2.0").notNull(),
     tokenHash: text("token_hash"),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     status: runnerStatus().default("offline").notNull(),
@@ -253,12 +256,19 @@ export const jobs = pgTable(
     targetId: uuid("target_id")
       .notNull()
       .references(() => targets.id, { onDelete: "cascade" }),
+    credentialProfileId: uuid("credential_profile_id").references(
+      () => credentialProfiles.id,
+      { onDelete: "restrict" },
+    ),
     runnerId: uuid("runner_id").references(() => runners.id, {
       onDelete: "set null",
     }),
     status: jobStatus().default("queued").notNull(),
     benchmarkId: text("benchmark_id"),
     benchmarkVersion: text("benchmark_version"),
+    execution: jsonb().$type<RunnerExecution>(),
+    workload: jsonb().$type<RunnerExecution["workload"]>(),
+    limits: jsonb().$type<Limits>(),
     requiredCapabilities: jsonb("required_capabilities")
       .$type<string[]>()
       .default([])
@@ -280,6 +290,7 @@ export const jobs = pgTable(
   },
   (table) => [
     index("jobs_experiment_id_index").on(table.experimentId),
+    index("jobs_credential_profile_id_index").on(table.credentialProfileId),
     index("jobs_retry_of_job_id_index").on(table.retryOfJobId),
     index("jobs_runner_status_index").on(table.runnerId, table.status),
     uniqueIndex("jobs_active_retry_unique")
@@ -287,6 +298,10 @@ export const jobs = pgTable(
       .where(
         sql`${table.retryOfJobId} is not null and ${table.status} in ('queued', 'leased', 'preparing', 'running', 'grading', 'uploading')`,
       ),
+    check(
+      "jobs_nonterminal_execution_check",
+      sql`${table.status} in ('completed', 'failed', 'cancelled', 'interrupted') or ${table.execution} is not null`,
+    ),
   ],
 );
 

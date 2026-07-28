@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import type { RunnerExecution } from "@llm-bench/contracts";
+
 import { createRunnerHttpHandler } from "./runner-http";
 import {
   createInMemoryRunnerJobStore,
@@ -11,9 +13,9 @@ import {
 } from "./runner-protocol";
 
 const pairingInput = {
-  protocolVersion: "1.0",
+  protocolVersion: "2.0",
   name: "fixture-runner",
-  publicKey: "public-key",
+  publicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
   capabilities: ["workspaces", "files"],
   environment: {
     os: "linux",
@@ -25,6 +27,39 @@ const pairingInput = {
     sandboxMode: "process",
     contentHashes: { runner: "sha256:runner" },
   },
+};
+
+const execution: RunnerExecution = {
+  workload: {
+    kind: "agentic",
+    task: {
+      id: "typescript-clamp-bounds",
+      language: "typescript",
+      constraints: ["Keep the clamp signature."],
+      repetitions: 1,
+    },
+    fixtureContentHash: "a".repeat(64),
+    graderHash: "b".repeat(64),
+  },
+  target: {
+    modelRoute: { id: "fixture", provider: "fixture", model: "fixture/model" },
+    harness: {
+      id: "fixture",
+      version: "1.0.0",
+      capabilities: ["workspaces", "files"],
+      modelRoutes: [
+        { id: "fixture", provider: "fixture", model: "fixture/model" },
+      ],
+    },
+    toolset: { id: "builtin", version: "1.0.0", tools: [], mcpProfiles: [] },
+  },
+  limits: {
+    maxDurationMs: 30_000,
+    maxToolCalls: 10,
+    maxTokens: 10_000,
+    maxTurns: 10,
+  },
+  credential: null,
 };
 
 describe("runner HTTP protocol", () => {
@@ -44,6 +79,7 @@ describe("runner HTTP protocol", () => {
       ownerId: "owner-1",
       benchmark: { id: "repository-repair", version: "1.0.0" },
       requiredCapabilities: ["workspaces", "files"],
+      execution,
     });
     const handle = createRunnerHttpHandler({
       protocol,
@@ -77,11 +113,21 @@ describe("runner HTTP protocol", () => {
       authorization: `Bearer ${approved.token}`,
       "content-type": "application/json",
     };
-    const leaseResponse = await handle(
+    const incompatibleLeaseResponse = await handle(
       new Request("https://bench.example/api/v1/runner/lease", {
         method: "POST",
         headers: authorized,
         body: JSON.stringify({ protocolVersion: "1.0" }),
+      }),
+      ["lease"],
+    );
+    expect(incompatibleLeaseResponse.status).toBe(400);
+
+    const leaseResponse = await handle(
+      new Request("https://bench.example/api/v1/runner/lease", {
+        method: "POST",
+        headers: authorized,
+        body: JSON.stringify({ protocolVersion: "2.0" }),
       }),
       ["lease"],
     );
@@ -93,7 +139,7 @@ describe("runner HTTP protocol", () => {
         method: "POST",
         headers: authorized,
         body: JSON.stringify({
-          protocolVersion: "1.0",
+          protocolVersion: "2.0",
           attemptId: leased.lease.attemptId,
           leaseToken: leased.lease.leaseToken,
           events: [
@@ -114,7 +160,7 @@ describe("runner HTTP protocol", () => {
       new Request("https://bench.example/api/v1/runner/heartbeat", {
         method: "POST",
         headers: authorized,
-        body: JSON.stringify({ protocolVersion: "1.0", status: "online" }),
+        body: JSON.stringify({ protocolVersion: "2.0", status: "online" }),
       }),
       ["heartbeat"],
     );
@@ -123,7 +169,7 @@ describe("runner HTTP protocol", () => {
         method: "POST",
         headers: authorized,
         body: JSON.stringify({
-          protocolVersion: "1.0",
+          protocolVersion: "2.0",
           attemptId: leased.lease.attemptId,
           leaseToken: leased.lease.leaseToken,
           checkpoint: { sequence: 1, resumable: true, state: { cursor: 1 } },
@@ -143,7 +189,7 @@ describe("runner HTTP protocol", () => {
         method: "POST",
         headers: authorized,
         body: JSON.stringify({
-          protocolVersion: "1.0",
+          protocolVersion: "2.0",
           attemptId: leased.lease.attemptId,
           leaseToken: leased.lease.leaseToken,
           status: "completed",
@@ -158,6 +204,7 @@ describe("runner HTTP protocol", () => {
     expect(pairingResponse.status).toBe(201);
     expect(poll.status).toBe(200);
     expect(leaseResponse.status).toBe(200);
+    expect(leased.lease).toMatchObject({ execution });
     expect(await eventResponse.json()).toEqual({ throughSequence: 0 });
     expect(heartbeat.status).toBe(200);
     expect(checkpoint.status).toBe(204);
@@ -188,7 +235,7 @@ describe("runner HTTP protocol", () => {
         await handle(
           new Request("https://bench.example/api/v1/runner/lease", {
             method: "POST",
-            body: JSON.stringify({ protocolVersion: "1.0" }),
+            body: JSON.stringify({ protocolVersion: "2.0" }),
           }),
           ["lease"],
         )
@@ -239,7 +286,7 @@ describe("runner HTTP protocol", () => {
           new Request("https://bench.example/api/v1/runner/lease", {
             method: "POST",
             headers: authorized,
-            body: JSON.stringify({ protocolVersion: "1.0" }),
+            body: JSON.stringify({ protocolVersion: "2.0" }),
           }),
           ["lease"],
         )
@@ -267,7 +314,7 @@ describe("runner HTTP protocol", () => {
       new Request("https://bench.example/api/v1/runner/lease", {
         method: "POST",
         headers: authorized,
-        body: JSON.stringify({ protocolVersion: "1.0" }),
+        body: JSON.stringify({ protocolVersion: "2.0" }),
       }),
       ["lease"],
     );

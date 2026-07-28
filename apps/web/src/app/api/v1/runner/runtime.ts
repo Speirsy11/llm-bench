@@ -30,7 +30,7 @@ export async function authorizeRunnerBlobUpload(input: {
   byteLength: number;
 }) {
   const runner = await runnerProtocol.authenticate(input.runnerToken);
-  await runnerJobs.cancellationStatus(runner, input);
+  await runnerJobs.authorizeArtifactUpload(runner, input);
   return {
     runnerId: runner.id,
     ...validateRunnerArtifactUpload(input),

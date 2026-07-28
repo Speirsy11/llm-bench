@@ -5,9 +5,11 @@ import type {
   Capability,
   RunnerCheckpoint,
   RunnerEventBatchRequest,
+  RunnerExecution,
   RunnerLease,
   RunnerTerminalRequest,
 } from "@llm-bench/contracts";
+import { RunnerExecutionSchema } from "@llm-bench/contracts";
 
 import type { PairedRunner } from "./runner-protocol";
 
@@ -16,6 +18,7 @@ export interface QueuedRunnerJob {
   ownerId: string;
   benchmark: { id: string; version: string };
   requiredCapabilities: Capability[];
+  execution: RunnerExecution;
   status:
     | "queued"
     | "leased"
@@ -113,7 +116,8 @@ export function createInMemoryRunnerJobStore(): InMemoryRunnerJobStore {
               candidate.assignedRunnerId === runner.id) &&
             candidate.requiredCapabilities.every((capability) =>
               runner.capabilities.includes(capability),
-            ),
+            ) &&
+            executionCanRunOn(candidate.execution, runner),
         )
         .sort((left, right) => left.position - right.position)[0];
       if (!job) return Promise.resolve(null);
@@ -201,12 +205,23 @@ export function createRunnerJobService({
       ownerId: string;
       benchmark: { id: string; version: string };
       requiredCapabilities: Capability[];
+      execution: RunnerExecution;
       experimentId?: string;
       targetId?: string;
     }): Promise<QueuedRunnerJob> {
+      const execution = RunnerExecutionSchema.parse(input.execution);
+      if (execution.target.harness.id === "llmbench" && !execution.credential) {
+        throw new Error("LLMBench execution requires a sealed credential.");
+      }
+      if (execution.target.harness.id !== "llmbench" && execution.credential) {
+        throw new Error(
+          "Native harness execution must not reference a hosted credential.",
+        );
+      }
       const job: QueuedRunnerJob = {
         id: randomUUID(),
         ...input,
+        execution,
         status: "queued",
         position: nextPosition++,
         assignedRunnerId: null,
@@ -229,6 +244,7 @@ export function createRunnerJobService({
         attemptId: claimed.attempt.id,
         leaseToken,
         benchmark: claimed.job.benchmark,
+        execution: RunnerExecutionSchema.parse(claimed.job.execution),
         queuePosition: claimed.job.position,
         checkpoint: claimed.attempt.checkpoint,
         cancellationRequested: claimed.job.cancellationRequested,
@@ -285,6 +301,16 @@ export function createRunnerJobService({
       }
     },
 
+    async authorizeArtifactUpload(
+      runner: PairedRunner,
+      request: { attemptId: string; leaseToken: string },
+    ): Promise<void> {
+      const attempt = await authorizeAttempt(store, runner, request);
+      if (isTerminal(attempt.status)) {
+        throw new Error("Attempt is already terminal.");
+      }
+    },
+
     async requestCancellation(ownerId: string, jobId: string): Promise<void> {
       const job = await store.findJob(jobId);
       if (job?.ownerId !== ownerId) {
@@ -335,6 +361,20 @@ function hashSecret(secret: string): string {
 
 function isTerminal(status: QueuedRunnerJob["status"]): boolean {
   return ["completed", "failed", "cancelled", "interrupted"].includes(status);
+}
+
+function executionCanRunOn(
+  execution: RunnerExecution,
+  runner: PairedRunner,
+): boolean {
+  if (execution.target.harness.id === "llmbench" && !execution.credential) {
+    return false;
+  }
+  if (!execution.credential) return true;
+  return (
+    execution.credential.sealed.runnerId === runner.id &&
+    execution.credential.provider === execution.target.modelRoute.provider
+  );
 }
 
 function requiredStoredAttempt(

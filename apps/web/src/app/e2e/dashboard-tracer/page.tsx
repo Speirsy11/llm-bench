@@ -1,8 +1,6 @@
-import { notFound } from "next/navigation";
-
-import { FixtureDashboardTracer } from "./tracer";
+import { notFound, redirect } from "next/navigation";
 
 export default function E2eDashboardTracerPage() {
   if (process.env.NODE_ENV === "production") notFound();
-  return <FixtureDashboardTracer />;
+  redirect("/dashboard");
 }

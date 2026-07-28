@@ -102,6 +102,7 @@ describe("LimitsSchema", () => {
         maxDurationMs: 600000,
         maxToolCalls: 0,
         maxTokens: 200000,
+        maxTurns: 20,
       }).success,
     ).toBe(true);
   });
@@ -112,6 +113,7 @@ describe("LimitsSchema", () => {
         maxDurationMs: 0,
         maxToolCalls: 10,
         maxTokens: 200000,
+        maxTurns: 20,
       }).success,
     ).toBe(false);
   });

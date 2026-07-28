@@ -65,9 +65,15 @@ importers:
 
   apps/web:
     dependencies:
+      '@llm-bench/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@llm-bench/control-plane':
         specifier: workspace:*
         version: link:../../packages/control-plane
+      '@llm-bench/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
       '@vercel/blob':
         specifier: 2.5.0
         version: 2.5.0
@@ -322,6 +328,9 @@ importers:
 
   packages/crypto:
     dependencies:
+      '@llm-bench/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       libsodium-wrappers:
         specifier: 0.7.15
         version: 0.7.15
@@ -554,20 +563,37 @@ importers:
         version: 3.2.6(@types/node@22.18.12)(jiti@2.7.0)(jsdom@26.1.0(bufferutil@4.0.8)(utf-8-validate@6.0.4))(lightningcss@1.30.2)(terser@5.44.0)(tsx@4.22.4)(yaml@2.8.1)
 
   packages/runner:
-    dependencies:
-      zod:
-        specifier: 'catalog:'
-        version: 4.1.12
     devDependencies:
+      '@llm-bench/claude-harness':
+        specifier: workspace:*
+        version: link:../claude-harness
+      '@llm-bench/codex-harness':
+        specifier: workspace:*
+        version: link:../codex-harness
       '@llm-bench/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@llm-bench/crypto':
+        specifier: workspace:*
+        version: link:../crypto
       '@llm-bench/eslint-config':
         specifier: workspace:*
         version: link:../../tooling/eslint
+      '@llm-bench/llm-bench-harness':
+        specifier: workspace:*
+        version: link:../llm-bench-harness
+      '@llm-bench/openai-compatible':
+        specifier: workspace:*
+        version: link:../openai-compatible
+      '@llm-bench/pi-harness':
+        specifier: workspace:*
+        version: link:../pi-harness
       '@llm-bench/prettier-config':
         specifier: workspace:*
         version: link:../../tooling/prettier
+      '@llm-bench/process-harness':
+        specifier: workspace:*
+        version: link:../process-harness
       '@llm-bench/repository-repair':
         specifier: workspace:*
         version: link:../repository-repair
@@ -604,6 +630,9 @@ importers:
       vitest:
         specifier: 'catalog:'
         version: 3.2.6(@types/node@22.18.12)(jiti@2.7.0)(jsdom@26.1.0(bufferutil@4.0.8)(utf-8-validate@6.0.4))(lightningcss@1.30.2)(terser@5.44.0)(tsx@4.22.4)(yaml@2.8.1)
+      zod:
+        specifier: 'catalog:'
+        version: 4.1.12
 
   packages/runner-engine:
     dependencies:

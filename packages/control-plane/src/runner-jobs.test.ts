@@ -1,9 +1,57 @@
 import { describe, expect, it } from "vitest";
 
+import type { RunnerExecution } from "@llm-bench/contracts";
+
 import {
   createInMemoryRunnerJobStore,
   createRunnerJobService,
 } from "./runner-jobs";
+
+const execution: RunnerExecution = {
+  workload: {
+    kind: "agentic",
+    task: {
+      id: "typescript-clamp-bounds",
+      language: "typescript",
+      constraints: ["Keep the clamp signature."],
+      repetitions: 1,
+    },
+    fixtureContentHash: "a".repeat(64),
+    graderHash: "b".repeat(64),
+  },
+  target: {
+    modelRoute: {
+      id: "fixture-model",
+      provider: "fixture",
+      model: "fixture/model",
+    },
+    harness: {
+      id: "fixture",
+      version: "1.0.0",
+      capabilities: ["workspaces", "files"],
+      modelRoutes: [
+        {
+          id: "fixture-model",
+          provider: "fixture",
+          model: "fixture/model",
+        },
+      ],
+    },
+    toolset: {
+      id: "builtin",
+      version: "1.0.0",
+      tools: ["read_file", "apply_patch"],
+      mcpProfiles: [],
+    },
+  },
+  limits: {
+    maxDurationMs: 30_000,
+    maxToolCalls: 10,
+    maxTokens: 10_000,
+    maxTurns: 10,
+  },
+  credential: null,
+};
 
 const runner = (id: string) => ({
   id,
@@ -28,6 +76,115 @@ const runner = (id: string) => ({
 });
 
 describe("runner job leasing", () => {
+  it("requires hosted credentials for LLMBench jobs", async () => {
+    const service = createRunnerJobService({
+      store: createInMemoryRunnerJobStore(),
+    });
+    await expect(
+      service.enqueue({
+        ownerId: "owner-1",
+        benchmark: { id: "repository-repair", version: "1.0.0" },
+        requiredCapabilities: ["workspaces", "files"],
+        execution: {
+          ...execution,
+          target: {
+            ...execution.target,
+            harness: { ...execution.target.harness, id: "llmbench" },
+          },
+        },
+      }),
+    ).rejects.toThrow("LLMBench execution requires a sealed credential.");
+  });
+
+  it("does not claim LLMBench jobs missing or mismatching runner credentials", async () => {
+    const store = createInMemoryRunnerJobStore();
+    const llmExecution = {
+      ...execution,
+      target: {
+        ...execution.target,
+        harness: { ...execution.target.harness, id: "llmbench" },
+      },
+    };
+    const credential = {
+      profileId: "70b70847-ec1c-4aeb-ac0f-bf7db0328efe",
+      provider: "fixture",
+      sealed: {
+        algorithm: "x25519-xsalsa20poly1305-seal" as const,
+        runnerId: "d0da824f-6f6a-4a01-af27-f7448d22bb39",
+        keyFingerprint: "AAAAAAAAAAAAAAAAAAAAAA==",
+        ciphertext: "A".repeat(68),
+      },
+    };
+    const job = (position: number, jobExecution: RunnerExecution) => ({
+      id: `job-${position}`,
+      ownerId: "owner-1",
+      benchmark: { id: "repository-repair", version: "1.0.0" },
+      requiredCapabilities: ["workspaces", "files"] as (
+        | "workspaces"
+        | "files"
+      )[],
+      execution: jobExecution,
+      status: "queued" as const,
+      position,
+      assignedRunnerId: null,
+      cancellationRequested: false,
+    });
+    await store.enqueue(job(0, llmExecution));
+    await store.enqueue(
+      job(1, { ...llmExecution, credential: { ...credential } }),
+    );
+    await store.enqueue(
+      job(2, {
+        ...llmExecution,
+        credential: {
+          ...credential,
+          provider: "other-provider",
+          sealed: { ...credential.sealed, runnerId: "runner-1" },
+        },
+      }),
+    );
+
+    await expect(
+      store.claimNext({
+        runner: runner("runner-1"),
+        attemptId: "attempt-1",
+        leaseTokenHash: "hash",
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it("keeps hosted credentials out of native harness jobs", async () => {
+    const service = createRunnerJobService({
+      store: createInMemoryRunnerJobStore(),
+    });
+    await expect(
+      service.enqueue({
+        ownerId: "owner-1",
+        benchmark: { id: "repository-repair", version: "1.0.0" },
+        requiredCapabilities: ["workspaces", "files"],
+        execution: {
+          ...execution,
+          target: {
+            ...execution.target,
+            harness: { ...execution.target.harness, id: "codex" },
+          },
+          credential: {
+            profileId: "70b70847-ec1c-4aeb-ac0f-bf7db0328efe",
+            provider: "fixture",
+            sealed: {
+              algorithm: "x25519-xsalsa20poly1305-seal",
+              runnerId: "d0da824f-6f6a-4a01-af27-f7448d22bb39",
+              keyFingerprint: "AAAAAAAAAAAAAAAAAAAAAA==",
+              ciphertext: "A".repeat(68),
+            },
+          },
+        },
+      }),
+    ).rejects.toThrow(
+      "Native harness execution must not reference a hosted credential.",
+    );
+  });
+
   it("allows only one runner to win a lease race", async () => {
     const service = createRunnerJobService({
       store: createInMemoryRunnerJobStore(),
@@ -37,6 +194,7 @@ describe("runner job leasing", () => {
       ownerId: "owner-1",
       benchmark: { id: "repository-repair", version: "1.0.0" },
       requiredCapabilities: ["workspaces", "files"],
+      execution,
     });
 
     const leases = await Promise.all([
@@ -49,6 +207,7 @@ describe("runner job leasing", () => {
       jobId: job.id,
       queuePosition: 0,
       leaseToken: "lease-token",
+      execution,
     });
   });
 
@@ -62,12 +221,13 @@ describe("runner job leasing", () => {
       ownerId: "owner-1",
       benchmark: { id: "repository-repair", version: "1.0.0" },
       requiredCapabilities: ["workspaces", "files"],
+      execution,
     });
     const pairedRunner = runner("runner-1");
     const lease = await service.lease(pairedRunner);
     if (!lease) throw new Error("Expected a lease.");
     const batch = {
-      protocolVersion: "1.0" as const,
+      protocolVersion: "2.0" as const,
       attemptId: lease.attemptId,
       leaseToken: lease.leaseToken,
       events: [
@@ -85,7 +245,7 @@ describe("runner job leasing", () => {
     await service.recordEvents(pairedRunner, batch);
     await service.recordEvents(pairedRunner, batch);
     await service.complete(pairedRunner, {
-      protocolVersion: "1.0",
+      protocolVersion: "2.0",
       attemptId: lease.attemptId,
       leaseToken: lease.leaseToken,
       status: "completed",
@@ -94,7 +254,7 @@ describe("runner job leasing", () => {
       error: null,
     });
     await service.complete(pairedRunner, {
-      protocolVersion: "1.0",
+      protocolVersion: "2.0",
       attemptId: lease.attemptId,
       leaseToken: lease.leaseToken,
       status: "failed",
@@ -121,6 +281,42 @@ describe("runner job leasing", () => {
     });
   });
 
+  it("rejects artifact upload authorization after terminal completion", async () => {
+    const service = createRunnerJobService({
+      store: createInMemoryRunnerJobStore(),
+      randomToken: () => "lease-token",
+    });
+    await service.enqueue({
+      ownerId: "owner-1",
+      benchmark: { id: "repository-repair", version: "1.0.0" },
+      requiredCapabilities: ["workspaces", "files"],
+      execution,
+    });
+    const pairedRunner = runner("runner-1");
+    const lease = await service.lease(pairedRunner);
+    if (!lease) throw new Error("Expected a lease.");
+    const authorization = {
+      attemptId: lease.attemptId,
+      leaseToken: lease.leaseToken,
+    };
+
+    await expect(
+      service.authorizeArtifactUpload(pairedRunner, authorization),
+    ).resolves.toBeUndefined();
+    await service.complete(pairedRunner, {
+      protocolVersion: "2.0",
+      ...authorization,
+      status: "completed",
+      observations: [],
+      artifacts: [],
+      error: null,
+    });
+
+    await expect(
+      service.authorizeArtifactUpload(pairedRunner, authorization),
+    ).rejects.toThrow("Attempt is already terminal.");
+  });
+
   it("exposes owner cancellation and the latest resumable checkpoint", async () => {
     const store = createInMemoryRunnerJobStore();
     const service = createRunnerJobService({
@@ -131,6 +327,7 @@ describe("runner job leasing", () => {
       ownerId: "owner-1",
       benchmark: { id: "repository-repair", version: "1.0.0" },
       requiredCapabilities: ["workspaces", "files"],
+      execution,
     });
     const pairedRunner = runner("runner-1");
     const lease = await service.lease(pairedRunner);
@@ -169,11 +366,13 @@ describe("runner job leasing", () => {
       ownerId: "owner-1",
       benchmark: { id: "repository-repair", version: "1.0.0" },
       requiredCapabilities: ["workspaces", "files"],
+      execution,
     });
     await service.enqueue({
       ownerId: "owner-1",
       benchmark: { id: "repository-repair", version: "1.0.0" },
       requiredCapabilities: ["workspaces", "files"],
+      execution,
     });
     const pairedRunner = runner("runner-1");
     const lease = await service.lease(pairedRunner);
@@ -240,6 +439,7 @@ describe("runner job leasing", () => {
       ownerId: "owner-1",
       benchmark: { id: "repository-repair", version: "1.0.0" },
       requiredCapabilities: ["workspaces", "files"],
+      execution,
       status: "queued",
       position: 0,
       assignedRunnerId: "runner-2",
@@ -250,6 +450,7 @@ describe("runner job leasing", () => {
       ownerId: "owner-1",
       benchmark: { id: "repository-repair", version: "1.0.0" },
       requiredCapabilities: ["workspaces", "files"],
+      execution,
       status: "queued",
       position: 1,
       assignedRunnerId: "runner-1",

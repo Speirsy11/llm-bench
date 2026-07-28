@@ -6,6 +6,7 @@
 export * from "./version";
 export * from "./metric";
 export * from "./capability";
+export * from "./credential";
 export * from "./manifest";
 export * from "./workload";
 export * from "./events";
@@ -13,3 +14,4 @@ export * from "./benchmark";
 export * from "./harness";
 export * from "./wire";
 export * from "./runner-protocol";
+export * from "./target-compatibility";

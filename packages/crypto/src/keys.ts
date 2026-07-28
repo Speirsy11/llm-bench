@@ -1,3 +1,5 @@
+import { RunnerPublicKeySchema } from "@llm-bench/contracts";
+
 import type { RunnerKeyPair } from "./types";
 import { getSodium } from "./sodium";
 
@@ -25,8 +27,12 @@ export async function generateRunnerKeyPair(): Promise<RunnerKeyPair> {
  * when a sealed credential is presented to a runner whose key does not match.
  */
 export async function fingerprintPublicKey(publicKey: string): Promise<string> {
+  const parsedPublicKey = RunnerPublicKeySchema.parse(publicKey);
   const sodium = await getSodium();
-  const raw = sodium.from_base64(publicKey, sodium.base64_variants.ORIGINAL);
+  const raw = sodium.from_base64(
+    parsedPublicKey,
+    sodium.base64_variants.ORIGINAL,
+  );
   const digest = sodium.crypto_generichash(16, raw);
   return sodium.to_base64(digest, sodium.base64_variants.ORIGINAL);
 }

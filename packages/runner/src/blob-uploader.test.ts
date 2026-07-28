@@ -1,19 +1,10 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
-import type { RunnerLease } from "@llm-bench/contracts";
-
 import { VercelBlobUploader } from "./blob-uploader";
+import { runnerLeaseFixture } from "./test-fixture";
 
-const lease: RunnerLease = {
-  jobId: "70b70847-ec1c-4aeb-ac0f-bf7db0328efe",
-  attemptId: "d0da824f-6f6a-4a01-af27-f7448d22bb39",
-  leaseToken: "lease-token",
-  benchmark: { id: "repository-repair", version: "1.0.0" },
-  queuePosition: 0,
-  checkpoint: null,
-  cancellationRequested: false,
-};
+const lease = runnerLeaseFixture();
 
 describe("VercelBlobUploader", () => {
   it("uploads private artifacts directly with lease-scoped client payload", async () => {

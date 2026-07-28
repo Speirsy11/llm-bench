@@ -90,3 +90,49 @@ jobs:
 
       - name: Runner contract tests
         run: pnpm test:runner-contract
+
+  browser-tracer:
+    name: Deterministic browser tracer
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: llmbench_e2e_test
+          POSTGRES_PASSWORD: llmbench
+          POSTGRES_USER: llmbench
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U llmbench -d llmbench_e2e_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://llmbench:llmbench@127.0.0.1:5432/llmbench_e2e_test
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Setup and install
+        uses: ./tooling/github/setup
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Migrate E2E database
+        run: DATABASE_URL="$TEST_DATABASE_URL" pnpm db:migrate
+
+      - name: Browser tracer
+        run: pnpm test:e2e
+
+      - name: Upload Playwright evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-browser-tracer
+          path: |
+            playwright-report
+            test-results
+          if-no-files-found: ignore
