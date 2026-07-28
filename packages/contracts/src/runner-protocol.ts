@@ -4,6 +4,7 @@ import { CapabilitySchema } from "./capability";
 import { RunnerPublicKeySchema, SealedCredentialSchema } from "./credential";
 import { BenchmarkEventSchema } from "./events";
 import {
+  ArtifactVersionSchema,
   HarnessManifestSchema,
   LimitsSchema,
   ModelRouteSchema,
@@ -12,7 +13,33 @@ import {
 import { MetricObservationSchema } from "./metric";
 import { AgenticTaskSchema } from "./workload";
 
-export const RUNNER_PROTOCOL_VERSION = "2.0" as const;
+export const RUNNER_PROTOCOL_VERSION = "3.0" as const;
+
+const ContentHashSchema = z.string().regex(/^[a-f0-9]{64}$/u);
+const WireProtocolVersionSchema = z.string().regex(/^\d+\.\d+\.\d+$/u);
+
+export const PluginExecutionRefSchema = z.strictObject({
+  protocolVersion: WireProtocolVersionSchema,
+  contentHash: ContentHashSchema,
+});
+
+export const RunnerInventorySchema = z.strictObject({
+  plugins: z.array(
+    z.strictObject({
+      protocolVersion: WireProtocolVersionSchema,
+      contentHash: ContentHashSchema,
+      manifest: HarnessManifestSchema,
+    }),
+  ),
+  mcpProfiles: z.array(
+    z.strictObject({
+      id: z.string().min(1),
+      version: ArtifactVersionSchema,
+      contentHash: ContentHashSchema,
+      tools: z.array(z.string().min(1)),
+    }),
+  ),
+});
 
 export const RunnerEnvironmentSchema = z.strictObject({
   os: z.enum(["darwin", "linux"]),
@@ -30,6 +57,7 @@ export const RunnerPairingStartRequestSchema = z.strictObject({
   name: z.string().trim().min(1).max(100),
   publicKey: RunnerPublicKeySchema,
   capabilities: z.array(CapabilitySchema),
+  inventory: RunnerInventorySchema,
   environment: RunnerEnvironmentSchema,
 });
 
@@ -53,6 +81,7 @@ export const RunnerPairingPollResponseSchema = z.discriminatedUnion("status", [
 export const RunnerHeartbeatRequestSchema = z.strictObject({
   protocolVersion: z.literal(RUNNER_PROTOCOL_VERSION),
   status: z.literal("online"),
+  inventory: RunnerInventorySchema,
 });
 
 export const RunnerHeartbeatResponseSchema = z.strictObject({
@@ -77,6 +106,7 @@ export const RunnerExecutionSchema = z.strictObject({
     modelRoute: ModelRouteSchema,
     harness: HarnessManifestSchema,
     toolset: ToolsetSchema,
+    plugin: PluginExecutionRefSchema.optional(),
   }),
   limits: LimitsSchema.extend({ maxTurns: z.number().int().positive() }),
   credential: z
@@ -94,7 +124,7 @@ export const RunnerLeaseSchema = z.strictObject({
   leaseToken: z.string().min(1),
   benchmark: z.strictObject({
     id: z.string().min(1),
-    version: z.string().min(1),
+    version: ArtifactVersionSchema,
   }),
   execution: RunnerExecutionSchema,
   queuePosition: z.number().int().nonnegative(),
@@ -158,8 +188,10 @@ export const RunnerTerminalRequestSchema = z.strictObject({
 });
 
 export type RunnerCheckpoint = z.infer<typeof RunnerCheckpointSchema>;
+export type PluginExecutionRef = z.infer<typeof PluginExecutionRefSchema>;
 export type RunnerExecution = z.infer<typeof RunnerExecutionSchema>;
 export type RunnerEnvironment = z.infer<typeof RunnerEnvironmentSchema>;
+export type RunnerInventory = z.infer<typeof RunnerInventorySchema>;
 export type RunnerPairingStartRequest = z.infer<
   typeof RunnerPairingStartRequestSchema
 >;

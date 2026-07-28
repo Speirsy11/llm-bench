@@ -51,4 +51,53 @@ describe("defaultDashboardMatrix", () => {
       "Unsupported dashboard harness: pi.",
     );
   });
+
+  it("builds an external plugin matrix only from its runner advertisement", () => {
+    const matrix = dashboardMatrixForHarness(
+      "example-repair",
+      {
+        plugins: [
+          {
+            protocolVersion: "1.0.0",
+            contentHash: "a".repeat(64),
+            manifest: {
+              id: "example-repair",
+              version: "2.0.0",
+              capabilities: ["workspaces", "files", "mcp"],
+              modelRoutes: [
+                {
+                  id: "example-local",
+                  provider: "example",
+                  model: "deterministic",
+                },
+              ],
+            },
+          },
+        ],
+        mcpProfiles: [
+          {
+            id: "github",
+            version: "1.0.0",
+            contentHash: "b".repeat(64),
+            tools: ["issues_list"],
+          },
+        ],
+      },
+      ["github"],
+    );
+
+    expect(matrix).toMatchObject({
+      modelRoutes: [{ id: "example-local" }],
+      harnesses: [{ id: "example-repair", version: "2.0.0" }],
+      toolsets: [
+        {
+          id: "plugin-example-repair",
+          tools: ["read_file", "list_directory", "search_files", "apply_patch"],
+          mcpProfiles: [
+            { id: "github", version: "1.0.0", contentHash: "b".repeat(64) },
+          ],
+        },
+      ],
+    });
+  });
 });

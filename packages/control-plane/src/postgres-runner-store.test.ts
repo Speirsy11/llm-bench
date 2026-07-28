@@ -15,6 +15,7 @@ const authenticatedRunner: PairedRunner = {
   name: "stale-authenticated-runner",
   publicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
   capabilities: [],
+  inventory: { plugins: [], mcpProfiles: [] },
   environment: {
     os: "linux",
     architecture: "x64",

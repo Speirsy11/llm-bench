@@ -543,7 +543,13 @@ process.exit(10);
           id: "mcp",
           version: "1.0.0",
           tools: [],
-          mcpProfiles: ["filesystem"],
+          mcpProfiles: [
+            {
+              id: "filesystem",
+              version: "1.0.0",
+              contentHash: "a".repeat(64),
+            },
+          ],
         },
       }),
     ).rejects.toThrow("MCP profiles");

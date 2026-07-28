@@ -15,6 +15,7 @@ import type {
   Capability,
   RunnerCheckpoint,
   RunnerExecution,
+  RunnerInventory,
   RunnerTerminalRequest,
 } from "@llm-bench/contracts";
 import {
@@ -123,10 +124,14 @@ export class PostgresRunnerProtocolStore implements RunnerProtocolStore {
       .where(eq(runners.id, runnerId));
   }
 
-  async recordHeartbeat(runnerId: string, lastSeenAt: Date): Promise<void> {
+  async recordHeartbeat(
+    runnerId: string,
+    lastSeenAt: Date,
+    inventory: RunnerInventory,
+  ): Promise<void> {
     await this.db
       .update(runners)
-      .set({ status: "online", lastSeenAt })
+      .set({ status: "online", lastSeenAt, inventory })
       .where(
         and(
           eq(runners.id, runnerId),
@@ -148,6 +153,7 @@ export class PostgresRunnerProtocolStore implements RunnerProtocolStore {
         publicKey: runner.publicKey,
         protocolVersion: RUNNER_PROTOCOL_VERSION,
         capabilities: runner.capabilities,
+        inventory: runner.inventory,
         environment: runner.environment,
       });
       const claimed = await transaction
@@ -294,6 +300,7 @@ export class PostgresRunnerJobStore implements RunnerJobStore {
               candidate.job.requiredCapabilities as Capability[],
               LLMBENCH_REPOSITORY_TOOLS,
               runner.environment.harnessVersions,
+              runner.inventory,
             ).length > 0
           ) {
             throw new Error("Queued job target is incompatible.");
@@ -577,6 +584,7 @@ function runnerFromRow(row: typeof runners.$inferSelect): PairedRunner {
     name: row.name,
     publicKey: row.publicKey,
     capabilities: row.capabilities as unknown as Capability[],
+    inventory: row.inventory,
     environment: row.environment as PairedRunner["environment"],
     tokenHash: row.tokenHash ?? "",
     revokedAt: row.revokedAt,

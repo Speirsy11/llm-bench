@@ -4,6 +4,7 @@ import {
   RUNNER_PROTOCOL_VERSION,
   RunnerEventBatchRequestSchema,
   RunnerHeartbeatRequestSchema,
+  RunnerInventorySchema,
   RunnerLeaseResponseSchema,
   RunnerPairingPollResponseSchema,
   RunnerPairingStartRequestSchema,
@@ -11,6 +12,28 @@ import {
 } from "./runner-protocol";
 
 const runnerPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+const inventory = {
+  plugins: [
+    {
+      protocolVersion: "1.0.0",
+      contentHash: "c".repeat(64),
+      manifest: {
+        id: "example-repair",
+        version: "1.0.0",
+        capabilities: ["response_generation", "workspaces", "files"],
+        modelRoutes: [],
+      },
+    },
+  ],
+  mcpProfiles: [
+    {
+      id: "filesystem",
+      version: "1.2.0",
+      contentHash: "d".repeat(64),
+      tools: ["read_file"],
+    },
+  ],
+};
 
 const execution = {
   workload: {
@@ -69,6 +92,46 @@ const execution = {
 };
 
 describe("runner protocol", () => {
+  it("keeps plugin wire versions strict while accepting full artifact SemVer", () => {
+    const versionedInventory = {
+      plugins: [
+        {
+          protocolVersion: "1.0.0",
+          contentHash: "a".repeat(64),
+          manifest: {
+            id: "codex",
+            version: "2.0.0-rc.1+build.7",
+            capabilities: ["workspaces"],
+            modelRoutes: [],
+          },
+        },
+      ],
+      mcpProfiles: [
+        {
+          id: "filesystem",
+          version: "1.2.0-beta.2+sha.abcdef",
+          contentHash: "b".repeat(64),
+          tools: ["read_file"],
+        },
+      ],
+    };
+
+    expect(RunnerInventorySchema.safeParse(versionedInventory).success).toBe(
+      true,
+    );
+    expect(
+      RunnerInventorySchema.safeParse({
+        ...versionedInventory,
+        plugins: [
+          {
+            ...versionedInventory.plugins[0],
+            protocolVersion: "1.0.0-rc.1",
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
   it("validates a leased tracer job returned to a paired runner", () => {
     expect(
       RunnerLeaseResponseSchema.parse({
@@ -77,7 +140,10 @@ describe("runner protocol", () => {
           jobId: "70b70847-ec1c-4aeb-ac0f-bf7db0328efe",
           attemptId: "d0da824f-6f6a-4a01-af27-f7448d22bb39",
           leaseToken: "lease-token",
-          benchmark: { id: "repository-repair", version: "1.0.0" },
+          benchmark: {
+            id: "repository-repair",
+            version: "1.0.0-rc.1+build.7",
+          },
           execution,
           queuePosition: 0,
           checkpoint: null,
@@ -93,6 +159,7 @@ describe("runner protocol", () => {
       name: "workstation",
       publicKey: runnerPublicKey,
       capabilities: ["workspaces", "files"],
+      inventory,
       environment: {
         os: "linux",
         architecture: "arm64",
@@ -110,6 +177,34 @@ describe("runner protocol", () => {
       RunnerPairingStartRequestSchema.parse({
         ...input,
         environment: { ...input.environment, hostname: "private-host" },
+      }),
+    ).toThrow();
+    expect(() =>
+      RunnerPairingStartRequestSchema.parse({
+        ...input,
+        inventory: {
+          ...inventory,
+          mcpProfiles: [
+            {
+              ...inventory.mcpProfiles[0],
+              executable: "/private/bin/mcp-server",
+            },
+          ],
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      RunnerPairingStartRequestSchema.parse({
+        ...input,
+        inventory: {
+          ...inventory,
+          plugins: [
+            {
+              ...inventory.plugins[0],
+              protocolVersion: "not-semantic",
+            },
+          ],
+        },
       }),
     ).toThrow();
   });
@@ -163,8 +258,9 @@ describe("runner protocol", () => {
     ).toMatchObject({ status: "approved" });
     expect(() =>
       RunnerHeartbeatRequestSchema.parse({
-        protocolVersion: "3.0",
+        protocolVersion: "99.0",
         status: "online",
+        inventory,
       }),
     ).toThrow();
   });

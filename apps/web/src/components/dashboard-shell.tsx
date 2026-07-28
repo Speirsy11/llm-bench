@@ -7,7 +7,11 @@ import type {
   DashboardRunner,
 } from "@llm-bench/control-plane";
 
-import type { DashboardHarnessPreviews } from "./experiment-matrix";
+import type {
+  AdvertisedMcpProfile,
+  AdvertisedPluginChoice,
+  DashboardHarnessPreviews,
+} from "./experiment-matrix";
 import { CredentialForm } from "./credential-form";
 import { DashboardPoller } from "./dashboard-poller";
 import { ExperimentMatrix } from "./experiment-matrix";
@@ -24,6 +28,8 @@ const activeJobStatuses = new Set([
 
 export function DashboardShell({
   cancelJobAction,
+  advertisedMcpProfiles = [],
+  advertisedPlugins = [],
   credentialProfiles,
   githubLogin,
   launchExperimentAction,
@@ -36,6 +42,8 @@ export function DashboardShell({
   experiments,
 }: {
   readonly cancelJobAction?: FormAction;
+  readonly advertisedMcpProfiles?: readonly AdvertisedMcpProfile[];
+  readonly advertisedPlugins?: readonly AdvertisedPluginChoice[];
   readonly credentialProfiles: readonly CredentialProfile[];
   readonly experiments: readonly DashboardExperimentDetail[];
   readonly githubLogin: string;
@@ -198,6 +206,8 @@ export function DashboardShell({
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
             <ExperimentMatrix
               action={launchExperimentAction}
+              advertisedMcpProfiles={advertisedMcpProfiles}
+              advertisedPlugins={advertisedPlugins}
               credentialProfileId={selectedCredential?.id}
               initialHarnessId={initialHarnessId}
               previews={previews}

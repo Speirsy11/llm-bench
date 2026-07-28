@@ -1,0 +1,42 @@
+{
+  "name": "@llm-bench/example-harness-plugin",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Executable example harness plugin for the LLMBench JSONL protocol.",
+  "type": "module",
+  "bin": {
+    "llm-bench-example-harness": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --outfile=dist/cli.js",
+    "clean": "git clean -xdf .cache .turbo coverage dist node_modules",
+    "format": "prettier --check . --ignore-path ../../.gitignore",
+    "lint": "eslint --flag unstable_native_nodejs_ts_config --cache --cache-location .cache/.eslintcache",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@speirsy11/llm-bench-harness-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@llm-bench/eslint-config": "workspace:*",
+    "@llm-bench/prettier-config": "workspace:*",
+    "@llm-bench/tsconfig": "workspace:*",
+    "@llm-bench/vitest-config": "workspace:*",
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "esbuild": "0.25.11",
+    "eslint": "catalog:",
+    "prettier": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "prettier": "@llm-bench/prettier-config"
+}

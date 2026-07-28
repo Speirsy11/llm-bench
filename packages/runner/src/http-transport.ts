@@ -4,6 +4,7 @@ import type {
   Capability,
   RunnerCheckpoint,
   RunnerEnvironment,
+  RunnerInventory,
   RunnerLease,
   RunnerPairingPollResponse,
   RunnerPairingStartResponse,
@@ -28,17 +29,29 @@ export class RunnerHttpTransport implements RunnerTransport {
   private readonly serverUrl: string;
   private readonly token: string;
   private readonly fetch: Fetch;
+  private readonly inventory: () => RunnerInventory;
 
-  constructor(options: { serverUrl: string; token: string; fetch?: Fetch }) {
+  constructor(options: {
+    serverUrl: string;
+    token: string;
+    fetch?: Fetch;
+    inventory?: () => RunnerInventory;
+  }) {
     this.serverUrl = options.serverUrl.replace(/\/$/, "");
     this.token = options.token;
     this.fetch = options.fetch ?? globalThis.fetch;
+    this.inventory =
+      options.inventory ?? (() => ({ plugins: [], mcpProfiles: [] }));
   }
 
   async heartbeat(): Promise<void> {
     const response = await this.request("heartbeat", {
       method: "POST",
-      body: { protocolVersion: RUNNER_PROTOCOL_VERSION, status: "online" },
+      body: {
+        protocolVersion: RUNNER_PROTOCOL_VERSION,
+        status: "online",
+        inventory: this.inventory(),
+      },
     });
     RunnerHeartbeatResponseSchema.parse(await response.json());
   }
@@ -151,6 +164,7 @@ export async function startRunnerPairing(
     name: string;
     publicKey: string;
     capabilities: Capability[];
+    inventory: RunnerInventory;
     environment: RunnerEnvironment;
   },
   fetch: Fetch = globalThis.fetch,
@@ -167,6 +181,7 @@ export async function startRunnerPairing(
         name: options.name,
         publicKey: options.publicKey,
         capabilities: options.capabilities,
+        inventory: options.inventory,
         environment: options.environment,
       }),
     }),

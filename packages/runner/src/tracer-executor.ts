@@ -1,16 +1,28 @@
-import { chmod, mkdir } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import type { PluginMcpConnection } from "@speirsy11/llm-bench-harness-sdk";
 
 import type {
   AdapterRunRequest,
   BenchmarkEvent,
   Checkpoint,
+  PluginExecutionRef,
   RunnerCheckpoint,
+  RunnerInventory,
   RunnerLease,
 } from "@llm-bench/contracts";
 import type { RunnerIdentity } from "@llm-bench/crypto";
 import type { HarnessProvider } from "@llm-bench/llm-bench-harness";
+import type {
+  McpProfile,
+  McpProfileRegistry,
+  McpRequestSession,
+  SecretResolver as McpSecretResolver,
+  McpUnixBridge,
+  McpUnixBridgeOptions,
+} from "@llm-bench/mcp";
 import type { FetchLike } from "@llm-bench/openai-compatible";
 import type { ProcessRunner } from "@llm-bench/process-harness";
 import type { RepairFixtureId } from "@llm-bench/repository-repair";
@@ -27,6 +39,7 @@ import {
   CredentialResolver,
   LlmBenchHarness,
 } from "@llm-bench/llm-bench-harness";
+import { startMcpSession, startMcpUnixBridge } from "@llm-bench/mcp";
 import { OpenRouterProvider } from "@llm-bench/openai-compatible";
 import { PiHarness } from "@llm-bench/pi-harness";
 import { repairFixture, repairScenario } from "@llm-bench/repository-repair";
@@ -36,20 +49,51 @@ import {
   JsonlEventSpool,
 } from "@llm-bench/runner-engine";
 
+import type { PluginRegistry } from "./plugin-registry";
 import type { RunnerExecutor } from "./worker";
+import { ExecutablePluginHarness } from "./plugin-host";
 
 type ProcessTarget = "codex" | "claude" | "pi";
-type SupportedHarnessId = "llmbench" | ProcessTarget;
 const openRouterCredential = /^sk-or-v1-[A-Za-z0-9_-]{16,}$/u;
 
 export interface TracerExecutorOptions {
   identity?: RunnerIdentity;
   openRouterFetch?: FetchLike;
   processRunners?: Partial<Record<ProcessTarget, ProcessRunner>>;
+  inventory?: RunnerInventory;
+  pluginRegistry?: Pick<PluginRegistry, "resolveExecution">;
+  pluginProcessRunner?: ProcessRunner;
+  resolvePluginCredential?: (
+    runnerCredentialName: string,
+  ) => Promise<string | undefined>;
+  mcpRegistry?: Pick<McpProfileRegistry, "get">;
+  resolveMcpSecret?: McpSecretResolver;
+  startMcp?: (
+    profile: McpProfile,
+    resolveSecret: McpSecretResolver,
+    options: { signal: AbortSignal },
+  ) => Promise<McpSessionHandle>;
+  startMcpBridge?: (
+    session: McpRequestSession,
+    options: McpUnixBridgeOptions,
+  ) => Promise<McpUnixBridge>;
+  removeMcpBridgeRoot?: (path: string) => Promise<void>;
   deadline?: AbortSignal;
 }
 
-/** Executes protocol-v2 repository-repair leases through their selected target. */
+interface McpSessionHandle extends McpRequestSession {
+  probe(signal?: AbortSignal): Promise<unknown>;
+  stop(): Promise<void>;
+}
+
+interface McpAwareFixtureHarness extends FixtureHarness {
+  repairWithMcp(
+    request: Parameters<FixtureHarness["repair"]>[0],
+    connections: readonly PluginMcpConnection[],
+  ): ReturnType<FixtureHarness["repair"]>;
+}
+
+/** Executes versioned repository-repair leases through their selected target. */
 export class TracerExecutor implements RunnerExecutor {
   constructor(
     private readonly root: string,
@@ -79,8 +123,9 @@ export class TracerExecutor implements RunnerExecutor {
     context: Parameters<RunnerExecutor["execute"]>[1],
   ): ReturnType<RunnerExecutor["execute"]> {
     const scenario = validateLocalWorkload(lease);
-    const harnessId = validateTarget(lease);
-    const harness = await this.harnessFor(lease, context, harnessId);
+    const harnessId = validateTarget(lease, this.options.inventory);
+    const baseHarness = await this.harnessFor(lease, context, harnessId);
+    const harness = this.withMcpProfiles(lease, baseHarness);
     const workspaceRoot = join(this.root, "workspaces");
     const artifactRoot = join(this.root, "artifacts");
     const spoolRoot = join(this.root, "spools");
@@ -131,8 +176,11 @@ export class TracerExecutor implements RunnerExecutor {
   private async harnessFor(
     lease: RunnerLease,
     context: Parameters<RunnerExecutor["execute"]>[1],
-    harnessId: SupportedHarnessId,
+    harnessId: string,
   ): Promise<FixtureHarness> {
+    if (lease.execution.target.plugin !== undefined) {
+      return this.pluginHarness(lease, context, lease.execution.target.plugin);
+    }
     switch (harnessId) {
       case "llmbench":
         return this.llmBenchHarness(lease);
@@ -164,7 +212,189 @@ export class TracerExecutor implements RunnerExecutor {
         adapter.command(adapterRequest(lease, context, ""));
         throw new Error("PiHarness unexpectedly accepted an agentic task.");
       }
+      /* v8 ignore start -- compatibility preflight rejects unknown non-plugin harnesses before dispatch. */
+      default:
+        throw new Error(`Unsupported harness: ${harnessId}`);
+      /* v8 ignore stop */
     }
+  }
+
+  private async pluginHarness(
+    lease: RunnerLease,
+    context: Parameters<RunnerExecutor["execute"]>[1],
+    selected: PluginExecutionRef,
+  ): Promise<McpAwareFixtureHarness> {
+    const registry = this.options.pluginRegistry;
+    if (registry === undefined) {
+      throw new Error("Runner plugin registry is unavailable.");
+    }
+    const execution = await registry.resolveExecution(
+      lease.execution.target.harness.id,
+    );
+    if (
+      execution.protocolVersion !== selected.protocolVersion ||
+      execution.contentHash !== selected.contentHash
+    ) {
+      throw new Error(
+        `Plugin ${lease.execution.target.harness.id} no longer matches the leased immutable identity. Reinstall or refresh the runner.`,
+      );
+    }
+    const credentials: Record<string, string> = {};
+    for (const [pluginName, runnerName] of Object.entries(
+      execution.credentialGrants,
+    )) {
+      const value = await this.options.resolvePluginCredential?.(runnerName);
+      if (value === undefined) {
+        throw new Error(
+          `Plugin credential grant '${runnerName}' for ${pluginName} could not be resolved.`,
+        );
+      }
+      credentials[pluginName] = value;
+    }
+    const plugin = new ExecutablePluginHarness(
+      {
+        argv: execution.argv,
+        protocolVersion: execution.protocolVersion,
+        manifest: lease.execution.target.harness,
+      },
+      { runner: this.options.pluginProcessRunner },
+    );
+    const repairWithMcp: McpAwareFixtureHarness["repairWithMcp"] = async (
+      { workspace, signal },
+      mcpConnections,
+    ) => {
+      const result = await plugin.run(
+        adapterRequest(lease, { ...context, signal }, workspace.root),
+        { attemptId: lease.attemptId, credentials, mcpConnections },
+      );
+      if (
+        result.checkpoint !== null &&
+        !isDeepStrictEqual(result.checkpoint, context.checkpoint)
+      ) {
+        const { jobId: _jobId, ...checkpoint } = result.checkpoint;
+        await context.saveCheckpoint(checkpoint);
+      }
+      if (result.status !== "completed") {
+        throw new Error(
+          result.error ?? `Plugin ${lease.execution.target.harness.id} failed.`,
+        );
+      }
+      return { trajectory: [result.output] };
+    };
+    return {
+      repair: (request) => repairWithMcp(request, []),
+      repairWithMcp,
+    };
+  }
+
+  private withMcpProfiles(
+    lease: RunnerLease,
+    harness: FixtureHarness,
+  ): FixtureHarness {
+    const selected = lease.execution.target.toolset.mcpProfiles;
+    if (selected.length === 0) return harness;
+    if (!isMcpAwareHarness(harness)) {
+      throw new Error(
+        `Harness ${lease.execution.target.harness.id} cannot consume runner-managed MCP connections.`,
+      );
+    }
+    return {
+      repair: async (request) => {
+        const registry = this.options.mcpRegistry;
+        if (registry === undefined) {
+          throw new Error("Runner MCP profile registry is unavailable.");
+        }
+        const sessions: McpSessionHandle[] = [];
+        const bridges: McpUnixBridge[] = [];
+        const connections: PluginMcpConnection[] = [];
+        const bridgeRoot = mcpBridgeRoot(this.root, lease.attemptId);
+        let primaryError: unknown;
+        let executionFailed = false;
+        let outcome!: Awaited<ReturnType<FixtureHarness["repair"]>>;
+        try {
+          for (const [index, reference] of selected.entries()) {
+            const profile = await registry.get(reference.id);
+            if (
+              profile.metadata.version !== reference.version ||
+              profile.metadata.contentHash !== reference.contentHash
+            ) {
+              throw new Error(
+                `MCP profile ${reference.id} no longer matches the leased immutable identity.`,
+              );
+            }
+            const session = await (this.options.startMcp ?? startMcpSession)(
+              profile,
+              this.options.resolveMcpSecret ??
+                (() => Promise.resolve(undefined)),
+              { signal: request.signal },
+            );
+            sessions.push(session);
+            await session.probe(request.signal);
+            const bridge = await (
+              this.options.startMcpBridge ?? startMcpUnixBridge
+            )(session, {
+              root: bridgeRoot,
+              socketName: `${String(index)}.sock`,
+            });
+            bridges.push(bridge);
+            connections.push({
+              profile: {
+                id: reference.id,
+                version: reference.version,
+                contentHash: reference.contentHash,
+              },
+              transport: "unix",
+              socketPath: bridge.socketPath,
+            });
+          }
+          outcome = await harness.repairWithMcp(request, connections);
+        } catch (error) {
+          primaryError = error;
+          executionFailed = true;
+        }
+        const cleanupErrors: unknown[] = [];
+        for (const bridge of bridges.reverse()) {
+          try {
+            await bridge.stop();
+          } catch (error) {
+            cleanupErrors.push(error);
+          }
+        }
+        for (const session of sessions.reverse()) {
+          try {
+            await session.stop();
+          } catch (error) {
+            cleanupErrors.push(error);
+          }
+        }
+        try {
+          await (
+            this.options.removeMcpBridgeRoot ??
+            ((path) => rm(path, { recursive: true, force: true }))
+          )(bridgeRoot);
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        if (cleanupErrors.length > 0) {
+          const cleanup = new AggregateError(
+            cleanupErrors,
+            `MCP cleanup failed: ${cleanupErrors.map(describeCleanupError).join("; ")}`,
+          );
+          if (primaryError instanceof Error) {
+            primaryError.message = `${primaryError.message}; ${cleanup.message}`;
+          } else if (executionFailed) {
+            primaryError = new AggregateError(
+              [primaryError, ...cleanupErrors],
+              `MCP execution failed: ${String(primaryError)}; ${cleanup.message}`,
+            );
+          } else {
+            throw cleanup;
+          }
+        }
+        if (executionFailed) throw primaryError;
+        return outcome;
+      },
+    };
   }
 
   private async llmBenchHarness(lease: RunnerLease): Promise<FixtureHarness> {
@@ -233,6 +463,26 @@ export class TracerExecutor implements RunnerExecutor {
   }
 }
 
+function describeCleanupError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isMcpAwareHarness(
+  harness: FixtureHarness,
+): harness is McpAwareFixtureHarness {
+  return (
+    "repairWithMcp" in harness && typeof harness.repairWithMcp === "function"
+  );
+}
+
+function mcpBridgeRoot(root: string, attemptId: string): string {
+  const jobKey = createHash("sha256")
+    .update(attemptId)
+    .digest("hex")
+    .slice(0, 16);
+  return join(root, "mcp", jobKey);
+}
+
 function assertOpenRouterCredential(value: string): void {
   if (!openRouterCredential.test(value)) {
     throw new Error("OpenRouter credential is malformed.");
@@ -285,14 +535,19 @@ function validateLocalWorkload(
   return scenario;
 }
 
-function validateTarget(lease: RunnerLease): SupportedHarnessId {
+function validateTarget(
+  lease: RunnerLease,
+  inventory?: RunnerInventory,
+): string {
   const [blocker] = targetCompatibilityBlockers(
     lease.execution.target,
     REPOSITORY_REPAIR_REQUIRED_CAPABILITIES,
     LLMBENCH_REPOSITORY_TOOLS,
+    undefined,
+    inventory,
   );
   if (blocker) throw new Error(blocker);
-  return lease.execution.target.harness.id as SupportedHarnessId;
+  return lease.execution.target.harness.id;
 }
 
 function processFixtureHarness(

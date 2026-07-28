@@ -47,6 +47,89 @@ setTimeout(() => {
     expect(JSON.stringify(result)).not.toContain("api-secret");
   });
 
+  it("redacts overlapping secrets longest-first", async () => {
+    const root = await mkdtemp(join(tmpdir(), "node-process-runner-"));
+    roots.push(root);
+    const executable = join(root, "fixture.mjs");
+    await writeFile(
+      executable,
+      `#!/usr/bin/env node
+process.stdout.write("prefix-suffix\\n");
+process.stderr.write("prefix-suffix\\n");
+`,
+    );
+    await chmod(executable, 0o700);
+
+    const result = await new NodeProcessRunner().run({
+      argv: [process.execPath, executable],
+      cwd: root,
+      env: {},
+      maxOutputBytes: 1_024,
+      redact: ["prefix", "prefix-suffix", "prefix"],
+    });
+
+    expect(result.stdoutLines).toEqual(["[REDACTED]"]);
+    expect(result.stderr).toBe("[REDACTED]\n");
+  });
+
+  it("can preserve structured stdout while continuing to redact stderr", async () => {
+    const root = await mkdtemp(join(tmpdir(), "node-process-runner-"));
+    roots.push(root);
+    const executable = join(root, "fixture.mjs");
+    await writeFile(
+      executable,
+      `#!/usr/bin/env node
+process.stdout.write('{"kind":"run_result","protocolVersion":"1.0.0","output":"1.0.0"}\\n');
+process.stderr.write("failed with 1.0.0\\n");
+`,
+    );
+    await chmod(executable, 0o700);
+
+    const result = await new NodeProcessRunner().run({
+      argv: [process.execPath, executable],
+      cwd: root,
+      env: {},
+      maxOutputBytes: 1_024,
+      redact: ["1.0.0"],
+      redactStdout: false,
+    });
+
+    expect(result.stdoutLines).toEqual([
+      '{"kind":"run_result","protocolVersion":"1.0.0","output":"1.0.0"}',
+    ]);
+    expect(result.stderr).toBe("failed with [REDACTED]\n");
+  });
+
+  it("preserves multibyte UTF-8 split across stream chunks", async () => {
+    const root = await mkdtemp(join(tmpdir(), "node-process-runner-"));
+    roots.push(root);
+    const executable = join(root, "fixture.mjs");
+    await writeFile(
+      executable,
+      `#!/usr/bin/env node
+const glyph = Buffer.from("🙂");
+process.stdout.write(glyph.subarray(0, 2));
+process.stderr.write(glyph.subarray(0, 2));
+setTimeout(() => {
+  process.stdout.end(Buffer.concat([glyph.subarray(2), Buffer.from("\\n")]));
+  process.stderr.end(glyph.subarray(2));
+}, 25);
+`,
+    );
+    await chmod(executable, 0o700);
+
+    const result = await new NodeProcessRunner().run({
+      argv: [process.execPath, executable],
+      cwd: root,
+      env: {},
+      maxOutputBytes: 1_024,
+    });
+
+    expect(result.stdoutLines).toEqual(["🙂"]);
+    expect(result.stderr).toBe("🙂");
+    expect(result.outputBytes).toBe(9);
+  });
+
   it("stops a process whose combined output exceeds the byte limit", async () => {
     const root = await mkdtemp(join(tmpdir(), "node-process-runner-"));
     roots.push(root);

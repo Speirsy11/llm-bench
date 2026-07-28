@@ -137,6 +137,7 @@ describe("DashboardShell", () => {
             name: "M2 runner",
             publicKey: "public-key",
             capabilities: ["workspaces", "files"],
+            inventory: { plugins: [], mcpProfiles: [] },
             environment: {
               os: "darwin",
               architecture: "arm64",
@@ -431,6 +432,7 @@ function runnerFixture({
     name,
     publicKey: "public-key",
     capabilities: ["workspaces", "files"] as ("workspaces" | "files")[],
+    inventory: { plugins: [], mcpProfiles: [] },
     environment: {
       os: "darwin" as const,
       architecture: "arm64",

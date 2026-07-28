@@ -22,7 +22,7 @@
     "postinstall": "pnpm lint:ws",
     "test": "turbo run test",
     "test:coverage": "turbo run test:coverage",
-    "test:e2e": "pnpm --filter @speirsy11/llm-bench-runner build && playwright test --workers=1",
+    "test:e2e": "turbo run build --filter=@speirsy11/llm-bench-runner... && playwright test --workers=1",
     "test:fixtures": "pnpm --filter @llm-bench/repository-repair test",
     "test:integration": "turbo run test:integration",
     "test:runner-contract": "turbo run test --filter=@speirsy11/llm-bench-runner --filter=@llm-bench/codex-harness --filter=@llm-bench/claude-harness --filter=@llm-bench/pi-harness",

@@ -168,7 +168,7 @@ describe("dashboard experiment orchestration", () => {
     );
     await database.db
       .update(runnerRows)
-      .set({ protocolVersion: "2.0" })
+      .set({ protocolVersion: "3.0" })
       .where(eq(runnerRows.id, runner.id));
     await expect(
       controlPlane.dashboard.previewExperiment(actor, {
@@ -343,7 +343,7 @@ describe("dashboard experiment orchestration", () => {
       },
     });
     await jobService.complete(runner, {
-      protocolVersion: "2.0",
+      protocolVersion: "3.0",
       attemptId: lease.attemptId,
       leaseToken: lease.leaseToken,
       status: "completed",
@@ -604,7 +604,13 @@ describe("dashboard experiment orchestration", () => {
             id: "builtin",
             version: "1.0.0",
             tools: [...LLMBENCH_REPOSITORY_TOOLS],
-            mcpProfiles: ["filesystem"],
+            mcpProfiles: [
+              {
+                id: "filesystem",
+                version: "1.0.0",
+                contentHash: "a".repeat(64),
+              },
+            ],
           },
         ],
       }),
@@ -1067,10 +1073,11 @@ async function pairRunnerForActor(
     randomToken: () => randomUUID(),
   });
   const pairing = await protocol.startPairing({
-    protocolVersion: "2.0",
+    protocolVersion: "3.0",
     name: `${name} runner`,
     publicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     capabilities: ["response_generation", "workspaces", "files"],
+    inventory: { plugins: [], mcpProfiles: [] },
     environment: {
       os: "linux",
       architecture: "arm64",
@@ -1095,5 +1102,5 @@ async function heartbeatRunner(
   const protocol = createRunnerProtocolService({
     store: new PostgresRunnerProtocolStore(database.db),
   });
-  await protocol.heartbeat(runner);
+  await protocol.heartbeat(runner, runner.inventory);
 }

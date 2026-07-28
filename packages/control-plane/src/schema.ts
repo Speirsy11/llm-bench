@@ -17,7 +17,11 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 
-import type { Limits, RunnerExecution } from "@llm-bench/contracts";
+import type {
+  Limits,
+  RunnerExecution,
+  RunnerInventory,
+} from "@llm-bench/contracts";
 
 export const experimentVisibility = pgEnum("experiment_visibility", [
   "private",
@@ -121,11 +125,15 @@ export const runners = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     name: text().notNull(),
     publicKey: text("public_key").notNull(),
-    protocolVersion: text("protocol_version").default("2.0").notNull(),
+    protocolVersion: text("protocol_version").default("3.0").notNull(),
     tokenHash: text("token_hash"),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     status: runnerStatus().default("offline").notNull(),
     capabilities: jsonb().$type<string[]>().default([]).notNull(),
+    inventory: jsonb()
+      .$type<RunnerInventory>()
+      .default({ plugins: [], mcpProfiles: [] })
+      .notNull(),
     environment: jsonb().$type<Record<string, unknown>>().default({}).notNull(),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })

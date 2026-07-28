@@ -52,6 +52,7 @@ describe("createDashboardExperimentService", () => {
       error: "Credential profile is not sealed for this runner.",
     },
   ])("rechecks the credential binding inside launch", async (fixture) => {
+    const runnerId = "d0da824f-6f6a-4a01-af27-f7448d22bb39";
     const transaction = {
       query: {
         credentialProfiles: {
@@ -60,13 +61,22 @@ describe("createDashboardExperimentService", () => {
       },
     };
     const db = {
+      query: {
+        runners: {
+          findFirst: () =>
+            Promise.resolve({
+              id: runnerId,
+              inventory: { plugins: [], mcpProfiles: [] },
+            }),
+        },
+      },
       transaction: (callback: (value: unknown) => Promise<unknown>) =>
         callback(transaction),
     } as unknown as DashboardDatabase;
     const service = createDashboardExperimentService(db);
     const input = {
       name: "Credential race",
-      runnerId: "d0da824f-6f6a-4a01-af27-f7448d22bb39",
+      runnerId,
       credentialProfileId: fixture.credentialProfileId,
       modelRoutes: [],
       harnesses: [

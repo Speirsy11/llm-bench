@@ -38,6 +38,7 @@ if (!connectionString) {
 }
 
 const database = createDatabase(connectionString);
+const inventory = { plugins: [], mcpProfiles: [] };
 
 const execution: RunnerExecution = {
   workload: repositoryRepairWorkload,
@@ -110,10 +111,11 @@ describe("durable runner protocol", () => {
 
     const pairRunner = async (name: string) => {
       const pairing = await protocol.startPairing({
-        protocolVersion: "2.0",
+        protocolVersion: "3.0",
         name,
         publicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
         capabilities: ["workspaces", "files"],
+        inventory,
         environment: {
           os: "linux",
           architecture: "arm64",
@@ -188,7 +190,7 @@ describe("durable runner protocol", () => {
     await expect(jobService.lease(winner)).resolves.toBeNull();
     await expect(jobService.lease(loser)).resolves.toBeNull();
     await jobService.recordEvents(winner, {
-      protocolVersion: "2.0",
+      protocolVersion: "3.0",
       attemptId: lease.attemptId,
       leaseToken: lease.leaseToken,
       events: [
@@ -203,7 +205,7 @@ describe("durable runner protocol", () => {
       ],
     });
     await jobService.recordEvents(winner, {
-      protocolVersion: "2.0",
+      protocolVersion: "3.0",
       attemptId: lease.attemptId,
       leaseToken: lease.leaseToken,
       events: [
@@ -227,7 +229,7 @@ describe("durable runner protocol", () => {
       { cancellationRequested: true },
     );
     await jobService.complete(winner, {
-      protocolVersion: "2.0",
+      protocolVersion: "3.0",
       attemptId: lease.attemptId,
       leaseToken: lease.leaseToken,
       status: "completed",
@@ -246,7 +248,7 @@ describe("durable runner protocol", () => {
       error: null,
     });
     await jobService.complete(winner, {
-      protocolVersion: "2.0",
+      protocolVersion: "3.0",
       attemptId: lease.attemptId,
       leaseToken: lease.leaseToken,
       status: "failed",
@@ -301,7 +303,7 @@ describe("durable runner protocol", () => {
     const emptyFailureLease = await jobService.lease(loser);
     if (!emptyFailureLease) throw new Error("Expected empty failure lease.");
     await jobService.complete(loser, {
-      protocolVersion: "2.0",
+      protocolVersion: "3.0",
       attemptId: emptyFailureLease.attemptId,
       leaseToken: emptyFailureLease.leaseToken,
       status: "failed",
@@ -329,7 +331,7 @@ describe("durable runner protocol", () => {
     });
     const staleHeartbeat = { ...winner };
     await protocol.revokeAuthenticated(winner);
-    await protocol.heartbeat(staleHeartbeat);
+    await protocol.heartbeat(staleHeartbeat, inventory);
     const revokedRunner = await protocolStore.findRunnerById(winner.id);
     expect(revokedRunner?.revokedAt).toBeInstanceOf(Date);
     expect(revokedRunner?.status).toBe("disabled");
@@ -350,10 +352,11 @@ describe("durable runner protocol", () => {
     ).resolves.toBeNull();
 
     const pairingForRace = await protocol.startPairing({
-      protocolVersion: "2.0",
+      protocolVersion: "3.0",
       name: "race-runner",
       publicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
       capabilities: ["workspaces", "files"],
+      inventory,
       environment: first.environment,
     });
     const consumedPairing = await protocolStore.findPairingByUserCodeHash(
@@ -457,7 +460,7 @@ describe("durable runner protocol", () => {
     ]);
     if (!leaseAfterMalformed) throw new Error("Expected valid job lease.");
     await jobService.complete(loser, {
-      protocolVersion: "2.0",
+      protocolVersion: "3.0",
       attemptId: leaseAfterMalformed.attemptId,
       leaseToken: leaseAfterMalformed.leaseToken,
       status: "failed",
@@ -586,7 +589,7 @@ describe("durable runner protocol", () => {
       deviceCodeHash: malformedPairingHash,
       userCodeHash: hashSecret("MALFORMED"),
       request: {
-        protocolVersion: "2.0",
+        protocolVersion: "3.0",
         name: "legacy-key-shape",
         publicKey: "legacy-der-public-key",
         capabilities: [],
@@ -671,7 +674,7 @@ describe("durable runner protocol", () => {
       ownerId,
       name: "revoked-claim-runner",
       publicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-      protocolVersion: "2.0",
+      protocolVersion: "3.0",
       tokenHash,
       status: "online",
       capabilities: ["response_generation", "workspaces", "files"],

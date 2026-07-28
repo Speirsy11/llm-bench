@@ -566,7 +566,13 @@ process.stdin.on("end", () => {
           id: "mcp",
           version: "1.0.0",
           tools: [],
-          mcpProfiles: ["filesystem"],
+          mcpProfiles: [
+            {
+              id: "filesystem",
+              version: "1.0.0",
+              contentHash: "a".repeat(64),
+            },
+          ],
         },
       }),
     ).rejects.toThrow("MCP profiles");

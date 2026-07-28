@@ -45,14 +45,19 @@ export default async function DashboardPage({
     ) ?? null;
   const previews: DashboardHarnessPreviews = {};
   if (selectedRunner) {
-    const enabledHarnesses = DASHBOARD_HARNESS_IDS.filter((harnessId) =>
-      harnessId === "llmbench"
-        ? selectedCredential !== null
-        : nativeHarnessCliBlocker(
-            harnessId,
-            selectedRunner.environment.harnessVersions,
-          ) === null,
-    );
+    const enabledHarnesses = [
+      ...DASHBOARD_HARNESS_IDS.filter((harnessId) =>
+        harnessId === "llmbench"
+          ? selectedCredential !== null
+          : nativeHarnessCliBlocker(
+              harnessId,
+              selectedRunner.environment.harnessVersions,
+            ) === null,
+      ),
+      ...selectedRunner.inventory.plugins
+        .map(({ manifest }) => manifest.id)
+        .filter((id) => !DASHBOARD_HARNESS_IDS.includes(id as never)),
+    ];
     const entries = await Promise.all(
       enabledHarnesses.map(async (harnessId) => {
         const preview = await controlPlane.dashboard.previewExperiment(actor, {
@@ -61,7 +66,7 @@ export default async function DashboardPage({
           ...(harnessId === "llmbench" && selectedCredential
             ? { credentialProfileId: selectedCredential.id }
             : {}),
-          ...dashboardMatrixForHarness(harnessId),
+          ...dashboardMatrixForHarness(harnessId, selectedRunner.inventory),
         });
         return [harnessId, preview] as const;
       }),
@@ -72,6 +77,18 @@ export default async function DashboardPage({
   return (
     <DashboardShell
       cancelJobAction={cancelJobAction}
+      advertisedMcpProfiles={selectedRunner?.inventory.mcpProfiles.map(
+        ({ id, version, contentHash }) => ({ id, version, contentHash }),
+      )}
+      advertisedPlugins={selectedRunner?.inventory.plugins.map(
+        ({ protocolVersion, contentHash, manifest }) => ({
+          id: manifest.id,
+          version: manifest.version,
+          protocolVersion,
+          contentHash,
+          supportsMcp: manifest.capabilities.includes("mcp"),
+        }),
+      )}
       credentialProfiles={credentialProfiles}
       experiments={experiments}
       githubLogin={session.user.githubLogin}

@@ -49,8 +49,10 @@ export function createRunnerHttpHandler({
 
       const runner = await authenticate(request, protocol);
       if (request.method === "POST" && path.join("/") === "heartbeat") {
-        RunnerHeartbeatRequestSchema.parse(await request.json());
-        await protocol.heartbeat(runner);
+        const heartbeat = RunnerHeartbeatRequestSchema.parse(
+          await request.json(),
+        );
+        await protocol.heartbeat(runner, heartbeat.inventory);
         return json({
           protocolVersion: RUNNER_PROTOCOL_VERSION,
           serverTime: now().toISOString(),

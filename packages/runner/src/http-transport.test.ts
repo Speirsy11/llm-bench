@@ -8,7 +8,7 @@ import {
 import { runnerLeaseFixture } from "./test-fixture";
 
 describe("RunnerHttpTransport", () => {
-  it("authenticates and validates a leased job from the v2 API", async () => {
+  it("authenticates and validates a leased job from the v3 API", async () => {
     const requests: Request[] = [];
     const transport = new RunnerHttpTransport({
       serverUrl: "https://bench.example",
@@ -17,7 +17,7 @@ describe("RunnerHttpTransport", () => {
         requests.push(request);
         return Promise.resolve(
           Response.json({
-            protocolVersion: "2.0",
+            protocolVersion: "3.0",
             lease: runnerLeaseFixture(),
           }),
         );
@@ -41,14 +41,14 @@ describe("RunnerHttpTransport", () => {
       if (url.pathname.endsWith("/heartbeat")) {
         return Promise.resolve(
           Response.json({
-            protocolVersion: "2.0",
+            protocolVersion: "3.0",
             serverTime: "2026-07-01T10:00:00.000Z",
           }),
         );
       }
       if (url.pathname.endsWith("/lease")) {
         return Promise.resolve(
-          Response.json({ protocolVersion: "2.0", lease: null }),
+          Response.json({ protocolVersion: "3.0", lease: null }),
         );
       }
       if (url.pathname.endsWith("/events")) {
@@ -175,6 +175,7 @@ describe("RunnerHttpTransport", () => {
       sandboxMode: "process",
       contentHashes: {},
     };
+    const inventory = { plugins: [], mcpProfiles: [] };
 
     await expect(
       startRunnerPairing(
@@ -183,6 +184,7 @@ describe("RunnerHttpTransport", () => {
           name: "runner",
           publicKey: "key",
           capabilities: ["workspaces", "files"],
+          inventory,
           environment,
         },
         fetch,
@@ -209,6 +211,7 @@ describe("RunnerHttpTransport", () => {
           name: "runner",
           publicKey: "key",
           capabilities: ["workspaces", "files"],
+          inventory,
           environment,
         },
         () => Promise.resolve(new Response(null, { status: 500 })),
@@ -221,6 +224,7 @@ describe("RunnerHttpTransport", () => {
           name: "runner",
           publicKey: "key",
           capabilities: ["workspaces", "files"],
+          inventory,
           environment,
         },
         () =>

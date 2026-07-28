@@ -1,0 +1,10 @@
+{
+  "extends": "@llm-bench/tsconfig/compiled-package.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "tsBuildInfoFile": "./.cache/build.tsbuildinfo"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts", "node_modules", "dist", "coverage"]
+}

@@ -13,10 +13,11 @@ import {
 } from "./runner-protocol";
 
 const pairingInput = {
-  protocolVersion: "2.0",
+  protocolVersion: "3.0",
   name: "fixture-runner",
   publicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
   capabilities: ["workspaces", "files"],
+  inventory: { plugins: [], mcpProfiles: [] },
   environment: {
     os: "linux",
     architecture: "arm64",
@@ -127,7 +128,7 @@ describe("runner HTTP protocol", () => {
       new Request("https://bench.example/api/v1/runner/lease", {
         method: "POST",
         headers: authorized,
-        body: JSON.stringify({ protocolVersion: "2.0" }),
+        body: JSON.stringify({ protocolVersion: "3.0" }),
       }),
       ["lease"],
     );
@@ -139,7 +140,7 @@ describe("runner HTTP protocol", () => {
         method: "POST",
         headers: authorized,
         body: JSON.stringify({
-          protocolVersion: "2.0",
+          protocolVersion: "3.0",
           attemptId: leased.lease.attemptId,
           leaseToken: leased.lease.leaseToken,
           events: [
@@ -160,7 +161,11 @@ describe("runner HTTP protocol", () => {
       new Request("https://bench.example/api/v1/runner/heartbeat", {
         method: "POST",
         headers: authorized,
-        body: JSON.stringify({ protocolVersion: "2.0", status: "online" }),
+        body: JSON.stringify({
+          protocolVersion: "3.0",
+          status: "online",
+          inventory: pairingInput.inventory,
+        }),
       }),
       ["heartbeat"],
     );
@@ -169,7 +174,7 @@ describe("runner HTTP protocol", () => {
         method: "POST",
         headers: authorized,
         body: JSON.stringify({
-          protocolVersion: "2.0",
+          protocolVersion: "3.0",
           attemptId: leased.lease.attemptId,
           leaseToken: leased.lease.leaseToken,
           checkpoint: { sequence: 1, resumable: true, state: { cursor: 1 } },
@@ -189,7 +194,7 @@ describe("runner HTTP protocol", () => {
         method: "POST",
         headers: authorized,
         body: JSON.stringify({
-          protocolVersion: "2.0",
+          protocolVersion: "3.0",
           attemptId: leased.lease.attemptId,
           leaseToken: leased.lease.leaseToken,
           status: "completed",
@@ -235,7 +240,7 @@ describe("runner HTTP protocol", () => {
         await handle(
           new Request("https://bench.example/api/v1/runner/lease", {
             method: "POST",
-            body: JSON.stringify({ protocolVersion: "2.0" }),
+            body: JSON.stringify({ protocolVersion: "3.0" }),
           }),
           ["lease"],
         )
@@ -286,7 +291,7 @@ describe("runner HTTP protocol", () => {
           new Request("https://bench.example/api/v1/runner/lease", {
             method: "POST",
             headers: authorized,
-            body: JSON.stringify({ protocolVersion: "2.0" }),
+            body: JSON.stringify({ protocolVersion: "3.0" }),
           }),
           ["lease"],
         )
@@ -314,7 +319,7 @@ describe("runner HTTP protocol", () => {
       new Request("https://bench.example/api/v1/runner/lease", {
         method: "POST",
         headers: authorized,
-        body: JSON.stringify({ protocolVersion: "2.0" }),
+        body: JSON.stringify({ protocolVersion: "3.0" }),
       }),
       ["lease"],
     );

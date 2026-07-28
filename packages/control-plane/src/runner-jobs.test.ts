@@ -53,12 +53,15 @@ const execution: RunnerExecution = {
   credential: null,
 };
 
+const inventory = { plugins: [], mcpProfiles: [] };
+
 const runner = (id: string) => ({
   id,
   ownerId: "owner-1",
   name: id,
   publicKey: "public-key",
   capabilities: ["workspaces", "files"] as ("workspaces" | "files")[],
+  inventory,
   environment: {
     os: "linux" as const,
     architecture: "arm64",
@@ -227,7 +230,7 @@ describe("runner job leasing", () => {
     const lease = await service.lease(pairedRunner);
     if (!lease) throw new Error("Expected a lease.");
     const batch = {
-      protocolVersion: "2.0" as const,
+      protocolVersion: "3.0" as const,
       attemptId: lease.attemptId,
       leaseToken: lease.leaseToken,
       events: [
@@ -245,7 +248,7 @@ describe("runner job leasing", () => {
     await service.recordEvents(pairedRunner, batch);
     await service.recordEvents(pairedRunner, batch);
     await service.complete(pairedRunner, {
-      protocolVersion: "2.0",
+      protocolVersion: "3.0",
       attemptId: lease.attemptId,
       leaseToken: lease.leaseToken,
       status: "completed",
@@ -254,7 +257,7 @@ describe("runner job leasing", () => {
       error: null,
     });
     await service.complete(pairedRunner, {
-      protocolVersion: "2.0",
+      protocolVersion: "3.0",
       attemptId: lease.attemptId,
       leaseToken: lease.leaseToken,
       status: "failed",
@@ -304,7 +307,7 @@ describe("runner job leasing", () => {
       service.authorizeArtifactUpload(pairedRunner, authorization),
     ).resolves.toBeUndefined();
     await service.complete(pairedRunner, {
-      protocolVersion: "2.0",
+      protocolVersion: "3.0",
       ...authorization,
       status: "completed",
       observations: [],

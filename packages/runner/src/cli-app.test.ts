@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import type { RunnerExtensionOperations } from "./cli-app";
 import { RunnerCli } from "./cli-app";
 import { RunnerStateStore } from "./state";
 
@@ -33,6 +34,7 @@ describe("RunnerCli", () => {
         }),
       probe: () => ({
         capabilities: ["workspaces", "files"],
+        inventory: { plugins: [], mcpProfiles: [] },
         environment: {
           os: "linux",
           architecture: "arm64",
@@ -106,6 +108,7 @@ describe("RunnerCli", () => {
       keyPair: () => Promise.resolve({ publicKey: "", privateKey: "" }),
       probe: () => ({
         capabilities: ["workspaces", "files"],
+        inventory: { plugins: [], mcpProfiles: [] },
         environment: {
           os: "linux",
           architecture: "arm64",
@@ -152,7 +155,7 @@ describe("RunnerCli", () => {
       "Runner started (pid 123).",
       "Runner running (pid 123).",
       "Doctor: healthy.",
-      '{"capabilities":["workspaces","files"],"environment":{"os":"linux","architecture":"arm64","cpuClass":"fixture","memoryMb":8192,"runtimeVersions":{"node":"22.21.0"},"harnessVersions":{},"sandboxMode":"process","contentHashes":{}}}',
+      '{"capabilities":["workspaces","files"],"inventory":{"plugins":[],"mcpProfiles":[]},"environment":{"os":"linux","architecture":"arm64","cpuClass":"fixture","memoryMb":8192,"runtimeVersions":{"node":"22.21.0"},"harnessVersions":{},"sandboxMode":"process","contentHashes":{}}}',
       "Runner stopped.",
     ]);
   });
@@ -172,6 +175,7 @@ describe("RunnerCli", () => {
       keyPair: () => Promise.resolve({ publicKey: rawKey, privateKey: rawKey }),
       probe: () => ({
         capabilities: ["workspaces", "files"],
+        inventory: { plugins: [], mcpProfiles: [] },
         environment: {
           os: "linux",
           architecture: "arm64",
@@ -254,4 +258,201 @@ describe("RunnerCli", () => {
       cli.run(["login", "https://bench.example", "expired"]),
     ).rejects.toThrow("Pairing code has expired.");
   });
+
+  it("routes explicit plugin and MCP operator commands without exposing local config", async () => {
+    const root = await mkdtemp(join(tmpdir(), "llm-bench-cli-"));
+    roots.push(root);
+    const output: string[] = [];
+    const calls: string[] = [];
+    const extensions = extensionFixture(calls);
+    const cli = extensionCli(
+      new RunnerStateStore(join(root, "state")),
+      output,
+      extensions,
+    );
+
+    await cli.run(["plugin", "add", "/plugin"]);
+    await cli.run(["plugin", "probe", "/plugin"]);
+    await cli.run(["plugin", "list"]);
+    await cli.run(["plugin", "grant", "fixture", "TOKEN", "RUNNER_TOKEN"]);
+    await cli.run(["plugin", "revoke", "fixture", "TOKEN"]);
+    await cli.run(["plugin", "remove", "fixture"]);
+    await cli.run(["mcp", "add", "/profiles/filesystem.json"]);
+    await cli.run(["mcp", "list"]);
+    await cli.run([
+      "mcp",
+      "grant",
+      "filesystem",
+      "MCP_TOKEN",
+      "RUNNER_MCP_TOKEN",
+    ]);
+    await cli.run(["mcp", "revoke", "filesystem", "MCP_TOKEN"]);
+    await cli.run(["mcp", "probe", "filesystem"]);
+    await cli.run(["mcp", "start", "filesystem"]);
+    await cli.run(["mcp", "capabilities", "filesystem"]);
+    await cli.run(["mcp", "stop", "filesystem"]);
+    await cli.run(["mcp", "remove", "filesystem"]);
+    await cli.run(["capabilities"]);
+
+    expect(calls).toEqual([
+      "plugin:add:/plugin",
+      "plugin:probe:/plugin",
+      "plugin:list",
+      "plugin:grant:fixture:TOKEN:RUNNER_TOKEN",
+      "plugin:revoke:fixture:TOKEN",
+      "plugin:remove:fixture",
+      "mcp:add:/profiles/filesystem.json",
+      "mcp:list",
+      "mcp:grant:filesystem:MCP_TOKEN:RUNNER_MCP_TOKEN",
+      "mcp:revoke:filesystem:MCP_TOKEN",
+      "mcp:probe:filesystem",
+      "mcp:probe:filesystem",
+      "mcp:probe:filesystem",
+      "mcp:stop:filesystem",
+      "mcp:remove:filesystem",
+    ]);
+    expect(output.join("\n")).not.toContain("/opt/private");
+    expect(output.join("\n")).not.toContain("RUNNER_TOKEN");
+  });
+
+  it("makes malformed extension commands actionable", async () => {
+    const root = await mkdtemp(join(tmpdir(), "llm-bench-cli-"));
+    roots.push(root);
+    const cli = extensionCli(
+      new RunnerStateStore(join(root, "state")),
+      [],
+      extensionFixture([]),
+    );
+    for (const arguments_ of [
+      ["plugin"],
+      ["plugin", "add"],
+      ["plugin", "add", "/plugin", "--not-allowed"],
+      ["plugin", "probe"],
+      ["plugin", "remove"],
+      ["plugin", "grant"],
+      ["plugin", "revoke"],
+      ["mcp"],
+      ["mcp", "add"],
+      ["mcp", "remove"],
+      ["mcp", "grant"],
+      ["mcp", "revoke"],
+      ["mcp", "probe"],
+      ["mcp", "start"],
+      ["mcp", "capabilities"],
+      ["mcp", "stop"],
+    ]) {
+      await expect(cli.run(arguments_)).rejects.toThrow();
+    }
+    const unavailable = extensionCli(
+      new RunnerStateStore(join(root, "other-state")),
+      [],
+    );
+    await expect(unavailable.run(["plugin", "list"])).rejects.toThrow(
+      "extension management is unavailable",
+    );
+  });
 });
+
+function extensionCli(
+  state: RunnerStateStore,
+  output: string[],
+  extensions?: RunnerExtensionOperations,
+): RunnerCli {
+  return new RunnerCli({
+    state,
+    output: (line) => output.push(line),
+    keyPair: () => Promise.reject(new Error("unused")),
+    probe: () => ({
+      capabilities: [],
+      inventory: { plugins: [], mcpProfiles: [] },
+      environment: {
+        os: "linux",
+        architecture: "arm64",
+        cpuClass: "fixture",
+        memoryMb: 1024,
+        runtimeVersions: {},
+        harnessVersions: {},
+        sandboxMode: "process",
+        contentHashes: {},
+      },
+      issues: [],
+    }),
+    pairing: {
+      start: () => Promise.reject(new Error("unused")),
+      poll: () => Promise.reject(new Error("unused")),
+    },
+    transport: () => ({
+      logout: () => Promise.resolve(),
+      heartbeat: () => Promise.resolve(),
+    }),
+    lifecycle: {
+      start: () => Promise.reject(new Error("unused")),
+      stop: () => Promise.resolve(),
+      isRunning: () => false,
+    },
+    sleep: () => Promise.resolve(),
+    ...(extensions === undefined ? {} : { extensions }),
+  });
+}
+
+function extensionFixture(calls: string[]): RunnerExtensionOperations {
+  return {
+    inventory: () => Promise.resolve({ plugins: [], mcpProfiles: [] }),
+    plugin: {
+      add: (executable) => {
+        calls.push(`plugin:add:${executable}`);
+        return Promise.resolve({ id: "fixture" });
+      },
+      probe: (argv) => {
+        calls.push(`plugin:probe:${argv.join(",")}`);
+        return Promise.resolve({ id: "fixture" });
+      },
+      list: () => {
+        calls.push("plugin:list");
+        return Promise.resolve([{ id: "fixture" }]);
+      },
+      grant: (id, pluginName, runnerName) => {
+        calls.push(`plugin:grant:${id}:${pluginName}:${runnerName}`);
+        return Promise.resolve();
+      },
+      revoke: (id, pluginName) => {
+        calls.push(`plugin:revoke:${id}:${pluginName}`);
+        return Promise.resolve();
+      },
+      remove: (id) => {
+        calls.push(`plugin:remove:${id}`);
+        return Promise.resolve();
+      },
+    },
+    mcp: {
+      add: (path) => {
+        calls.push(`mcp:add:${path}`);
+        return Promise.resolve();
+      },
+      list: () => {
+        calls.push("mcp:list");
+        return Promise.resolve([{ id: "filesystem" }]);
+      },
+      grant: (id, serverName, runnerName) => {
+        calls.push(`mcp:grant:${id}:${serverName}:${runnerName}`);
+        return Promise.resolve();
+      },
+      revoke: (id, serverName) => {
+        calls.push(`mcp:revoke:${id}:${serverName}`);
+        return Promise.resolve();
+      },
+      probe: (id) => {
+        calls.push(`mcp:probe:${id}`);
+        return Promise.resolve({ capabilities: { tools: {} } });
+      },
+      stop: (id) => {
+        calls.push(`mcp:stop:${id}`);
+        return Promise.resolve();
+      },
+      remove: (id) => {
+        calls.push(`mcp:remove:${id}`);
+        return Promise.resolve();
+      },
+    },
+  };
+}

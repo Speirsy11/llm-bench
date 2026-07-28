@@ -56,6 +56,7 @@ export function probeRunnerSystem(
   }
   return {
     capabilities: [...REPOSITORY_REPAIR_REQUIRED_CAPABILITIES],
+    inventory: { plugins: [], mcpProfiles: [] },
     environment: {
       os: os === "darwin" ? "darwin" : "linux",
       architecture: facts.architecture(),

@@ -1,7 +1,7 @@
 # @speirsy11/llm-bench-runner
 
 The local macOS/Linux worker for LLMBench. It pairs to one hosted account,
-leases one job at a time through protocol `2.0`, runs repository-repair work in
+leases one job at a time through protocol `3.0`, runs repository-repair work in
 an ephemeral workspace, buffers events through network loss, uploads private
 artifacts directly to Vercel Blob, and reports terminal state without exposing
 provider credentials.
@@ -45,6 +45,92 @@ already authenticated for the same local user that runs LLMBench. Pi supports
 response-mode adapter contracts but intentionally rejects repository-repair
 agentic leases before process start.
 
+### Local plugins
+
+Installation is an explicit runner-operator action. The dashboard can select
+only what this runner advertises; it cannot upload or install executable code.
+
+```bash
+llm-bench-runner plugin probe /absolute/path/to/plugin
+llm-bench-runner plugin add /absolute/path/to/plugin
+llm-bench-runner plugin list
+llm-bench-runner plugin grant example-harness-plugin API_TOKEN RUNNER_API_TOKEN
+llm-bench-runner plugin revoke example-harness-plugin API_TOKEN
+llm-bench-runner plugin remove example-harness-plugin
+```
+
+`add` accepts exactly one self-contained executable artifact (no interpreter or
+script arguments), resolves its real path, requires an executable regular file,
+performs a credential-free protocol handshake, and records its SHA-256 identity
+and sanitized manifest. The executable is re-hashed before every job. Grant
+commands map a plugin request name to one exact environment-variable name; they
+never store or display its value. An unresolved grant fails before the plugin
+starts. Plugins receive neither the runner environment nor native harness
+authentication.
+
+The SDK is documented in
+[`packages/harness-sdk/README.md`](../harness-sdk/README.md), with a complete
+local executable in
+[`packages/example-harness-plugin`](../example-harness-plugin).
+
+### Runner-installed MCP profiles
+
+Create an owner-controlled JSON file without a `contentHash`; the registry
+computes a stable hash from the complete profile and its resolved executable
+artifacts:
+
+```json
+{
+  "metadata": {
+    "protocolVersion": "1",
+    "id": "filesystem",
+    "version": "1.0.0",
+    "label": "Filesystem",
+    "description": "Pinned local filesystem MCP server",
+    "capabilities": ["tools"],
+    "tools": ["read_file"]
+  },
+  "local": {
+    "argv": ["/absolute/path/to/mcp-server", "--stdio"],
+    "secretReferences": {}
+  }
+}
+```
+
+```bash
+llm-bench-runner mcp add ./filesystem-profile.json
+llm-bench-runner mcp grant filesystem MCP_TOKEN RUNNER_MCP_TOKEN
+llm-bench-runner mcp list
+llm-bench-runner mcp probe filesystem
+llm-bench-runner mcp capabilities filesystem
+llm-bench-runner mcp start filesystem
+llm-bench-runner mcp stop filesystem
+llm-bench-runner mcp revoke filesystem MCP_TOKEN
+llm-bench-runner mcp remove filesystem
+```
+
+Profiles are stdio-only. Imported JSON must have an empty `secretReferences`
+object. Grant each server environment name to a runner environment variable
+locally with `mcp grant`; only then may that profile resolve it from the runner
+environment. `HOME`, `CODEX_HOME`, process launch variables, provider
+credentials, executable arguments, and secret references are never advertised
+to the control plane. Resolved secret values are redacted from MCP capabilities,
+results, errors, CLI output, and plugin bridge responses. Executable and direct
+interpreter-script bytes are reverified before launch; replacing an artifact or
+retargeting its symlink requires reinstalling the profile. `probe`,
+`capabilities`, and `start` are bounded start/probe/stop operations; MCP
+processes are otherwise job-owned and always stopped after completion,
+failure, cancellation, or partial startup. There is no untracked persistent MCP
+daemon for a later CLI process to inherit. A selected plugin receives only a
+job-scoped owner-only Unix socket descriptor; the runner bridges JSON-RPC to the
+initialized stdio server and removes the socket when the job ends.
+The per-attempt socket directory is also removed. Cleanup failures fail an
+otherwise successful run; if execution already failed, its primary error is
+retained and annotated with the cleanup failure.
+
+Stop the runner before changing extensions and restart it afterwards so its
+pairing/heartbeat inventory is a stable snapshot for leased jobs.
+
 ## Local state
 
 State defaults to `~/.llm-bench` and can be moved with
@@ -69,8 +155,12 @@ key before an LLMBench/OpenRouter job can run.
 ## Runtime contract
 
 - Node 22 on macOS or Linux.
-- Protocol `2.0`; older or otherwise incompatible payloads fail validation
+- Protocol `3.0`; older or otherwise incompatible payloads fail validation
   before work starts. The HTTP route remains under `/api/v1/runner/`.
+- Protocol-2 pairings are disabled by the protocol-3 migration because they
+  cannot advertise immutable plugin/MCP inventory. Update the runner, log out,
+  log in to create a new pairing, then recreate any credential profile sealed
+  to the previous runner key.
 - One active job per runner.
 - Every lease carries the selected repository task and fixture/grader hashes,
   model route, harness manifest, toolset, execution limits, and optional sealed
@@ -107,10 +197,14 @@ surrounding runner environment before executing untrusted work.
   state or corruption. Stop the runner, move the file aside as shown above, and
   pair again. Recreate credentials sealed to the previous public key.
 - A protocol validation error means the runner and hosted control plane do not
-  agree on protocol `2.0`. Update both sides; incompatible leases are not run.
+  agree on protocol `3.0`. Update both sides; incompatible leases are not run.
 - `doctor` checks the supported OS, Node version, login state, and control-plane
   heartbeat. It does not authenticate native harness CLIs; verify Codex or
   Claude directly under the runner's local user.
+- `executable changed after installation` or `no longer matches the leased
+immutable identity` means local extension state drifted after advertisement.
+  Stop the runner, remove and re-add the extension, then restart it; never
+  bypass the hash check.
 - LLMBench failures before an OpenRouter request commonly indicate a local
   fixture/grader hash mismatch, an incompatible route or toolset, a missing
   credential, or a credential sealed to another runner. Re-pair or update the

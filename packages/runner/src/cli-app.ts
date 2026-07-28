@@ -1,6 +1,7 @@
 import type {
   Capability,
   RunnerEnvironment,
+  RunnerInventory,
   RunnerPairingPollResponse,
   RunnerPairingStartResponse,
 } from "@llm-bench/contracts";
@@ -12,7 +13,29 @@ export type RunnerCapability = Capability;
 export interface CapabilityProbe {
   capabilities: RunnerCapability[];
   environment: RunnerEnvironment;
+  inventory: RunnerInventory;
   issues: string[];
+}
+
+export interface RunnerExtensionOperations {
+  inventory(): Promise<RunnerInventory>;
+  plugin: {
+    add(executable: string): Promise<unknown>;
+    remove(id: string): Promise<void>;
+    list(): Promise<unknown>;
+    probe(argv: [string, ...string[]]): Promise<unknown>;
+    grant(id: string, pluginName: string, runnerName: string): Promise<void>;
+    revoke(id: string, pluginName: string): Promise<void>;
+  };
+  mcp: {
+    add(profilePath: string): Promise<void>;
+    remove(id: string): Promise<void>;
+    list(): Promise<unknown>;
+    probe(id: string): Promise<unknown>;
+    stop(id: string): Promise<void>;
+    grant(id: string, serverName: string, runnerName: string): Promise<void>;
+    revoke(id: string, serverName: string): Promise<void>;
+  };
 }
 
 interface CliOptions {
@@ -26,6 +49,7 @@ interface CliOptions {
       name: string;
       publicKey: string;
       capabilities: RunnerCapability[];
+      inventory: RunnerInventory;
       environment: RunnerEnvironment;
     }): Promise<RunnerPairingStartResponse>;
     poll(
@@ -33,7 +57,10 @@ interface CliOptions {
       deviceCode: string,
     ): Promise<RunnerPairingPollResponse>;
   };
-  transport(credentials: RunnerCredentials): {
+  transport(
+    credentials: RunnerCredentials,
+    inventory: RunnerInventory,
+  ): {
     logout(runnerId: string): Promise<void>;
     heartbeat(): Promise<void>;
   };
@@ -43,6 +70,7 @@ interface CliOptions {
     isRunning(pid: number): boolean;
   };
   sleep(milliseconds: number): Promise<void>;
+  extensions?: RunnerExtensionOperations;
 }
 
 export class RunnerCli {
@@ -79,9 +107,18 @@ export class RunnerCli {
       this.options.output(
         JSON.stringify({
           capabilities: probe.capabilities,
+          inventory: await this.inventory(),
           environment: probe.environment,
         }),
       );
+      return;
+    }
+    if (command === "plugin") {
+      await this.plugin(argumentsRest);
+      return;
+    }
+    if (command === "mcp") {
+      await this.mcp(argumentsRest);
       return;
     }
     throw new Error(`Unknown runner command: ${command ?? ""}`);
@@ -99,6 +136,7 @@ export class RunnerCli {
       name,
       publicKey: keys.publicKey,
       capabilities: probe.capabilities,
+      inventory: await this.inventory(),
       environment: probe.environment,
     });
     this.options.output(
@@ -128,7 +166,9 @@ export class RunnerCli {
 
   private async logout(): Promise<void> {
     const credentials = await this.requiredCredentials();
-    await this.options.transport(credentials).logout(credentials.runnerId);
+    await this.options
+      .transport(credentials, await this.inventory())
+      .logout(credentials.runnerId);
     await this.options.state.clearCredentials();
     this.options.output("Runner logged out.");
   }
@@ -170,7 +210,9 @@ export class RunnerCli {
       throw new Error(`Doctor found issues: ${probe.issues.join("; ")}`);
     }
     const credentials = await this.requiredCredentials();
-    await this.options.transport(credentials).heartbeat();
+    await this.options
+      .transport(credentials, await this.inventory())
+      .heartbeat();
     this.options.output("Doctor: healthy.");
   }
 
@@ -188,5 +230,145 @@ export class RunnerCli {
       );
     }
     return probe;
+  }
+
+  private async inventory(): Promise<RunnerInventory> {
+    if (this.options.extensions === undefined) {
+      return { plugins: [], mcpProfiles: [] };
+    }
+    return this.options.extensions.inventory();
+  }
+
+  private async plugin(arguments_: string[]): Promise<void> {
+    const extensions = this.requiredExtensions();
+    const [command, ...rest] = arguments_;
+    if (command === "list") {
+      this.options.output(JSON.stringify(await extensions.plugin.list()));
+      return;
+    }
+    if (command === "add") {
+      const [executable, ...argv] = rest;
+      if (!executable || argv.length > 0) {
+        throw new Error(
+          "Usage: llm-bench-runner plugin add <self-contained-executable>",
+        );
+      }
+      const result = await extensions.plugin.add(executable);
+      this.options.output(JSON.stringify(result));
+      return;
+    }
+    if (command === "probe") {
+      const [executable, ...argv] = rest;
+      if (!executable) {
+        throw new Error(
+          "Usage: llm-bench-runner plugin probe <executable> [arguments...]",
+        );
+      }
+      const result = await extensions.plugin.probe([executable, ...argv]);
+      this.options.output(JSON.stringify(result));
+      return;
+    }
+    if (command === "remove") {
+      const [id] = rest;
+      if (!id) throw new Error("Usage: llm-bench-runner plugin remove <id>");
+      await extensions.plugin.remove(id);
+      this.options.output(`Plugin ${id} removed.`);
+      return;
+    }
+    if (command === "grant") {
+      const [id, pluginName, runnerName] = rest;
+      if (!id || !pluginName || !runnerName) {
+        throw new Error(
+          "Usage: llm-bench-runner plugin grant <id> <plugin-name> <runner-env-name>",
+        );
+      }
+      await extensions.plugin.grant(id, pluginName, runnerName);
+      this.options.output(`Plugin ${id} grant ${pluginName} saved.`);
+      return;
+    }
+    if (command === "revoke") {
+      const [id, pluginName] = rest;
+      if (!id || !pluginName) {
+        throw new Error(
+          "Usage: llm-bench-runner plugin revoke <id> <plugin-name>",
+        );
+      }
+      await extensions.plugin.revoke(id, pluginName);
+      this.options.output(`Plugin ${id} grant ${pluginName} revoked.`);
+      return;
+    }
+    throw new Error(`Unknown plugin command: ${command ?? ""}`);
+  }
+
+  private async mcp(arguments_: string[]): Promise<void> {
+    const extensions = this.requiredExtensions();
+    const [command, ...rest] = arguments_;
+    if (command === "list") {
+      this.options.output(JSON.stringify(await extensions.mcp.list()));
+      return;
+    }
+    if (command === "add") {
+      const [profilePath] = rest;
+      if (!profilePath)
+        throw new Error("Usage: llm-bench-runner mcp add <profile-json-path>");
+      await extensions.mcp.add(profilePath);
+      this.options.output("MCP profile added.");
+      return;
+    }
+    if (command === "remove") {
+      const [id] = rest;
+      if (!id) throw new Error("Usage: llm-bench-runner mcp remove <id>");
+      await extensions.mcp.remove(id);
+      this.options.output(`MCP profile ${id} removed.`);
+      return;
+    }
+    if (command === "grant") {
+      const [id, serverName, runnerName] = rest;
+      if (!id || !serverName || !runnerName) {
+        throw new Error(
+          "Usage: llm-bench-runner mcp grant <id> <server-name> <runner-env-name>",
+        );
+      }
+      await extensions.mcp.grant(id, serverName, runnerName);
+      this.options.output(`MCP profile ${id} grant ${serverName} saved.`);
+      return;
+    }
+    if (command === "revoke") {
+      const [id, serverName] = rest;
+      if (!id || !serverName) {
+        throw new Error(
+          "Usage: llm-bench-runner mcp revoke <id> <server-name>",
+        );
+      }
+      await extensions.mcp.revoke(id, serverName);
+      this.options.output(`MCP profile ${id} grant ${serverName} revoked.`);
+      return;
+    }
+    if (
+      command === "probe" ||
+      command === "start" ||
+      command === "capabilities"
+    ) {
+      const [id] = rest;
+      if (!id) throw new Error(`Usage: llm-bench-runner mcp ${command} <id>`);
+      const result = await extensions.mcp.probe(id);
+      this.options.output(JSON.stringify(result));
+      return;
+    }
+    if (command === "stop") {
+      const [id] = rest;
+      if (!id) throw new Error("Usage: llm-bench-runner mcp stop <id>");
+      await extensions.mcp.stop(id);
+      this.options.output(`MCP profile ${id} stopped.`);
+      return;
+    }
+    throw new Error(`Unknown MCP command: ${command ?? ""}`);
+  }
+
+  private requiredExtensions(): RunnerExtensionOperations {
+    if (this.options.extensions === undefined) {
+      throw new Error("Runner extension management is unavailable.");
+    }
+    return this.options.extensions;
   }
 }
