@@ -1,5 +1,5 @@
 import type { Capability } from "./capability";
-import type { RunnerExecution } from "./runner-protocol";
+import type { RunnerExecution, RunnerInventory } from "./runner-protocol";
 
 export const REPOSITORY_REPAIR_REQUIRED_CAPABILITIES = [
   "response_generation",
@@ -28,12 +28,30 @@ export function targetCompatibilityBlockers(
   requiredCapabilities: readonly Capability[],
   llmBenchTools: readonly string[],
   runnerHarnessVersions?: Readonly<Record<string, string>>,
+  runnerInventory?: RunnerInventory,
 ): string[] {
   const blockers: string[] = [];
-  if (!supportedHarnesses.has(target.harness.id)) {
+  const installedPlugin =
+    target.plugin === undefined
+      ? undefined
+      : runnerInventory?.plugins.find(
+          ({ manifest }) => manifest.id === target.harness.id,
+        );
+  const pluginMatches =
+    target.plugin !== undefined &&
+    installedPlugin !== undefined &&
+    installedPlugin.protocolVersion === target.plugin.protocolVersion &&
+    installedPlugin.contentHash === target.plugin.contentHash &&
+    sameHarnessManifest(installedPlugin.manifest, target.harness);
+  if (target.plugin !== undefined && !pluginMatches) {
+    blockers.push(
+      `Plugin ${target.harness.id} is not installed with protocol ${target.plugin.protocolVersion} and the selected content hash.`,
+    );
+  } else if (!supportedHarnesses.has(target.harness.id) && !pluginMatches) {
     blockers.push(`Harness ${target.harness.id} is unsupported.`);
   }
   if (
+    target.plugin === undefined &&
     supportedHarnesses.has(target.harness.id) &&
     target.harness.version !== SUPPORTED_HARNESS_VERSION
   ) {
@@ -41,7 +59,7 @@ export function targetCompatibilityBlockers(
       `Harness ${target.harness.id} version ${target.harness.version} is unsupported; expected ${SUPPORTED_HARNESS_VERSION}.`,
     );
   }
-  if (runnerHarnessVersions !== undefined) {
+  if (target.plugin === undefined && runnerHarnessVersions !== undefined) {
     const nativeCliBlocker = nativeHarnessCliBlocker(
       target.harness.id,
       runnerHarnessVersions,
@@ -83,11 +101,10 @@ export function targetCompatibilityBlockers(
         `LLMBench repository repair requires builtin toolset ${SUPPORTED_TOOLSET_VERSION} with tools: ${llmBenchTools.join(", ")}.`,
       );
     }
-  } else {
+  } else if (nativeHarnesses.has(target.harness.id)) {
     if (
-      nativeHarnesses.has(target.harness.id) &&
-      (target.toolset.id !== "native" ||
-        target.toolset.version !== SUPPORTED_TOOLSET_VERSION)
+      target.toolset.id !== "native" ||
+      target.toolset.version !== SUPPORTED_TOOLSET_VERSION
     ) {
       blockers.push(
         `Harness ${target.harness.id} requires native toolset ${SUPPORTED_TOOLSET_VERSION}.`,
@@ -100,11 +117,58 @@ export function targetCompatibilityBlockers(
     }
   }
   if (target.toolset.mcpProfiles.length > 0) {
-    blockers.push(
-      `Harness ${target.harness.id} does not support runner-managed MCP profiles.`,
-    );
+    if (!target.harness.capabilities.includes("mcp")) {
+      blockers.push(
+        `Harness ${target.harness.id} does not support runner-managed MCP profiles.`,
+      );
+    } else {
+      for (const selectedProfile of target.toolset.mcpProfiles) {
+        const installed = runnerInventory?.mcpProfiles.some(
+          (profile) =>
+            profile.id === selectedProfile.id &&
+            profile.version === selectedProfile.version &&
+            profile.contentHash === selectedProfile.contentHash,
+        );
+        if (!installed) {
+          blockers.push(
+            `MCP profile ${selectedProfile.id} ${selectedProfile.version} is not installed with the selected content hash.`,
+          );
+        }
+      }
+    }
   }
   return blockers;
+}
+
+function sameHarnessManifest(
+  left: RunnerExecution["target"]["harness"],
+  right: RunnerExecution["target"]["harness"],
+): boolean {
+  return (
+    left.id === right.id &&
+    left.version === right.version &&
+    sameStringSet(left.capabilities, right.capabilities) &&
+    sameStringSet(
+      left.modelRoutes.map(
+        (route) => `${route.id}\0${route.provider}\0${route.model}`,
+      ),
+      right.modelRoutes.map(
+        (route) => `${route.id}\0${route.provider}\0${route.model}`,
+      ),
+    )
+  );
+}
+
+function sameStringSet(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return (
+    left.length === right.length &&
+    new Set(left).size === left.length &&
+    new Set(right).size === right.length &&
+    left.every((value) => right.includes(value))
+  );
 }
 
 /** Runner-specific native CLI availability check shared by control and UI. */

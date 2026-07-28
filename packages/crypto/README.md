@@ -50,7 +50,7 @@ do not open or receive the OpenRouter ciphertext.
 ## Key format and re-pairing
 
 Runner public and private keys are canonical Base64 encodings of raw 32-byte
-X25519 material. Protocol `2.0` rejects the longer SPKI/PKCS8 DER encodings used
+X25519 material. Protocol `3.0` rejects the longer SPKI/PKCS8 DER encodings used
 by earlier local runner state. No in-place migration is implemented: the runner
 fails closed and requires re-pairing. Preserve or remove the legacy
 `credentials.json`, pair again to generate raw keys, and recreate any credential

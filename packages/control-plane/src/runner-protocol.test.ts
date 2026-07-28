@@ -5,11 +5,17 @@ import {
   createRunnerProtocolService,
 } from "./runner-protocol";
 
+const inventory = {
+  plugins: [],
+  mcpProfiles: [],
+};
+
 const pairingInput = {
-  protocolVersion: "2.0" as const,
+  protocolVersion: "3.0" as const,
   name: "fixture-runner",
   publicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
   capabilities: ["workspaces", "files"] as ("workspaces" | "files")[],
+  inventory,
   environment: {
     os: "linux" as const,
     architecture: "arm64",
@@ -148,7 +154,7 @@ describe("runner pairing", () => {
       ...(await service.authenticate("runner-token")),
     };
     await service.revokeRunner(owner, runnerId);
-    await service.heartbeat(staleHeartbeat);
+    await service.heartbeat(staleHeartbeat, inventory);
     await expect(service.authenticate("runner-token")).rejects.toThrow(
       "Runner authentication failed.",
     );
@@ -180,9 +186,9 @@ describe("runner pairing", () => {
         "missing-runner",
       ),
     ).rejects.toThrow("Runner is unavailable.");
-    expect(() => store.recordHeartbeat("missing", new Date())).toThrow(
-      "Runner is unavailable.",
-    );
+    expect(() =>
+      store.recordHeartbeat("missing", new Date(), inventory),
+    ).toThrow("Runner is unavailable.");
 
     const orphanRunner = {
       id: "orphan-runner",
@@ -190,6 +196,7 @@ describe("runner pairing", () => {
       name: "orphan",
       publicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
       capabilities: ["files" as const],
+      inventory,
       environment: pairingInput.environment,
       tokenHash: "hash",
       revokedAt: null,
@@ -228,9 +235,21 @@ describe("runner pairing", () => {
     );
     const runner = await store.findRunnerById(runnerId);
     if (!runner) throw new Error("Expected runner.");
-    await service.heartbeat(runner);
+    const advertisedInventory = {
+      plugins: [],
+      mcpProfiles: [
+        {
+          id: "filesystem",
+          version: "1.0.0",
+          contentHash: "a".repeat(64),
+          tools: ["read_file"],
+        },
+      ],
+    };
+    await service.heartbeat(runner, advertisedInventory);
     expect(runner.status).toBe("online");
     expect(runner.lastSeenAt).toBeInstanceOf(Date);
+    expect(runner.inventory).toEqual(advertisedInventory);
 
     const missingRunnerStore = {
       ...store,

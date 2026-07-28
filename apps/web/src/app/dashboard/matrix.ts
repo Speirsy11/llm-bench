@@ -2,6 +2,7 @@ import type {
   Capability,
   HarnessManifest,
   ModelRoute,
+  RunnerInventory,
   Toolset,
 } from "@llm-bench/contracts";
 
@@ -20,7 +21,7 @@ const openRouterRouteCatalog = {
 
 export const DASHBOARD_HARNESS_IDS = ["llmbench", "codex", "claude"] as const;
 
-export type DashboardHarnessId = (typeof DASHBOARD_HARNESS_IDS)[number];
+export type DashboardHarnessId = string;
 
 export function selectedDashboardModelRoutes(routeIds: readonly string[]) {
   return routeIds
@@ -35,7 +36,11 @@ export function defaultDashboardMatrix(): DashboardMatrix {
   return dashboardMatrixForHarness("llmbench");
 }
 
-export function dashboardMatrixForHarness(harnessId: string): DashboardMatrix {
+export function dashboardMatrixForHarness(
+  harnessId: string,
+  inventory: RunnerInventory = { plugins: [], mcpProfiles: [] },
+  selectedMcpProfileIds: readonly string[] = [],
+): DashboardMatrix {
   switch (harnessId) {
     case "llmbench": {
       const modelRoutes = Object.values(openRouterRouteCatalog);
@@ -87,8 +92,57 @@ export function dashboardMatrixForHarness(harnessId: string): DashboardMatrix {
         },
       });
     default:
-      throw new Error(`Unsupported dashboard harness: ${harnessId}.`);
+      return pluginMatrix(harnessId, inventory, selectedMcpProfileIds);
   }
+}
+
+const repositoryTools = [
+  "read_file",
+  "list_directory",
+  "search_files",
+  "apply_patch",
+];
+
+function pluginMatrix(
+  harnessId: string,
+  inventory: RunnerInventory,
+  selectedMcpProfileIds: readonly string[],
+): DashboardMatrix {
+  const plugin = inventory.plugins.find(
+    ({ manifest }) => manifest.id === harnessId,
+  );
+  if (plugin === undefined) {
+    throw new Error(`Unsupported dashboard harness: ${harnessId}.`);
+  }
+  const supportsMcp = plugin.manifest.capabilities.includes("mcp");
+  if (!supportsMcp && selectedMcpProfileIds.length > 0) {
+    throw new Error(`Harness does not advertise MCP support: ${harnessId}.`);
+  }
+  const selectedMcpProfiles = supportsMcp
+    ? [...new Set(selectedMcpProfileIds)].map((id) => {
+        const profile = inventory.mcpProfiles.find((item) => item.id === id);
+        if (profile === undefined) {
+          throw new Error(`Unknown MCP profile for runner: ${id}.`);
+        }
+        return {
+          id: profile.id,
+          version: profile.version,
+          contentHash: profile.contentHash,
+        };
+      })
+    : [];
+  return {
+    modelRoutes: plugin.manifest.modelRoutes,
+    harnesses: [plugin.manifest],
+    toolsets: [
+      {
+        id: `plugin-${plugin.manifest.id}`,
+        version: plugin.manifest.version,
+        tools: repositoryTools,
+        mcpProfiles: selectedMcpProfiles,
+      },
+    ],
+  };
 }
 
 function nativeMatrix({

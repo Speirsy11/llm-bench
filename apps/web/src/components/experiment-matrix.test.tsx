@@ -149,6 +149,50 @@ describe("ExperimentMatrix", () => {
     ).toHaveLength(1);
     renderer.unmount();
   });
+
+  it("renders only runner-advertised plugin and MCP metadata", async () => {
+    let renderer: ReactTestRenderer | undefined;
+    await act(() => {
+      renderer = create(
+        <ExperimentMatrix
+          advertisedMcpProfiles={[
+            { id: "github", version: "1.0.0", contentHash: "a".repeat(64) },
+          ]}
+          advertisedPlugins={[
+            {
+              id: "example-repair",
+              version: "2.0.0",
+              protocolVersion: "1.0.0",
+              contentHash: "b".repeat(64),
+              supportsMcp: true,
+            },
+          ]}
+          initialHarnessId="example-repair"
+          previews={{
+            "example-repair": previewFixture({
+              harnessId: "example-repair",
+              modelRouteIds: ["example-local"],
+              toolsetId: "plugin-example-repair",
+            }),
+          }}
+          runnerId="runner-1"
+        />,
+      );
+    });
+    if (!renderer) throw new Error("Renderer was not created.");
+
+    expect(
+      renderer.root.findAllByProps({
+        name: "harness",
+        value: "example-repair",
+      }),
+    ).toHaveLength(1);
+    expect(
+      renderer.root.findAllByProps({ name: "mcpProfile", value: "github" }),
+    ).toHaveLength(1);
+    expect(renderedText(renderer)).toContain("github · v1.0.0");
+    renderer.unmount();
+  });
 });
 
 function previewFixture({
@@ -156,9 +200,9 @@ function previewFixture({
   modelRouteIds,
   toolsetId,
 }: {
-  readonly harnessId: "llmbench" | "codex" | "claude";
+  readonly harnessId: string;
   readonly modelRouteIds: readonly string[];
-  readonly toolsetId: "builtin" | "native";
+  readonly toolsetId: string;
 }): ExperimentPreview {
   const modelRoutes = modelRouteIds.map((id) => ({
     id,

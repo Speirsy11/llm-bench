@@ -1,0 +1,5 @@
+{
+  "extends": "@llm-bench/tsconfig/compiled-package.json",
+  "include": ["src/**/*.ts", "eslint.config.ts", "vitest.config.ts"],
+  "exclude": ["node_modules", "dist"]
+}

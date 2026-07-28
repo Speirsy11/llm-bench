@@ -162,10 +162,11 @@ async function scanRunnerRoot(root: string): Promise<string> {
 async function startPairing(request: APIRequestContext) {
   const response = await request.post("/api/v1/runner/pairings", {
     data: {
-      protocolVersion: "2.0",
+      protocolVersion: "3.0",
       name: "Fixture runner",
       publicKey: RUNNER_KEYS.publicKey,
       capabilities: ["response_generation", "workspaces", "files"],
+      inventory: { plugins: [], mcpProfiles: [] },
       environment: {
         os: "linux",
         architecture: "x64",
@@ -207,7 +208,11 @@ async function heartbeat(
 ): Promise<void> {
   const response = await request.post("/api/v1/runner/heartbeat", {
     headers: { authorization: `Bearer ${token}` },
-    data: { protocolVersion: "2.0", status: "online" },
+    data: {
+      protocolVersion: "3.0",
+      status: "online",
+      inventory: { plugins: [], mcpProfiles: [] },
+    },
   });
   expect(response.ok()).toBe(true);
 }

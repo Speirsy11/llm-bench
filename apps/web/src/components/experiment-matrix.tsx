@@ -9,16 +9,34 @@ export type DashboardHarnessPreviews = Partial<
   Record<DashboardHarnessId, ExperimentPreview>
 >;
 
+export interface AdvertisedPluginChoice {
+  readonly id: string;
+  readonly version: string;
+  readonly protocolVersion: string;
+  readonly contentHash: string;
+  readonly supportsMcp: boolean;
+}
+
+export interface AdvertisedMcpProfile {
+  readonly id: string;
+  readonly version: string;
+  readonly contentHash: string;
+}
+
 type FormAction = (formData: FormData) => void | Promise<void>;
 
 export function ExperimentMatrix({
   action,
+  advertisedMcpProfiles = [],
+  advertisedPlugins = [],
   credentialProfileId,
   initialHarnessId,
   previews,
   runnerId,
 }: {
   readonly action?: FormAction;
+  readonly advertisedMcpProfiles?: readonly AdvertisedMcpProfile[];
+  readonly advertisedPlugins?: readonly AdvertisedPluginChoice[];
   readonly credentialProfileId?: string;
   readonly initialHarnessId: DashboardHarnessId;
   readonly previews: DashboardHarnessPreviews;
@@ -81,7 +99,40 @@ export function ExperimentMatrix({
                     select={setHarnessId}
                   />
                 ) : null}
+                {advertisedPlugins.map((plugin) =>
+                  previews[plugin.id] ? (
+                    <HarnessChoice
+                      disabled={false}
+                      harnessId={plugin.id}
+                      key={plugin.id}
+                      label={`${plugin.id} · v${plugin.version} · protocol ${plugin.protocolVersion} · ${plugin.contentHash}`}
+                      selectedHarnessId={harnessId}
+                      select={setHarnessId}
+                    />
+                  ) : null,
+                )}
               </fieldset>
+              {advertisedPlugins.find(({ id }) => id === harnessId)
+                ?.supportsMcp ? (
+                <fieldset className="grid gap-3">
+                  <legend className="text-sm font-medium">
+                    Runner-installed MCP profiles
+                  </legend>
+                  {advertisedMcpProfiles.map((profile) => (
+                    <label
+                      className="flex items-center gap-3 text-sm"
+                      key={profile.id}
+                    >
+                      <input
+                        name="mcpProfile"
+                        type="checkbox"
+                        value={profile.id}
+                      />
+                      {profile.id} · v{profile.version} · {profile.contentHash}
+                    </label>
+                  ))}
+                </fieldset>
+              ) : null}
               {harnessId === "llmbench" ? (
                 <fieldset className="grid gap-3">
                   <legend className="text-sm font-medium">
@@ -186,10 +237,10 @@ function HarnessChoice({
   select,
 }: {
   readonly disabled: boolean;
-  readonly harnessId: DashboardHarnessId;
+  readonly harnessId: string;
   readonly label: string;
-  readonly selectedHarnessId: DashboardHarnessId;
-  readonly select: (harnessId: DashboardHarnessId) => void;
+  readonly selectedHarnessId: string;
+  readonly select: (harnessId: string) => void;
 }) {
   return (
     <label className="flex items-center gap-3 text-sm">

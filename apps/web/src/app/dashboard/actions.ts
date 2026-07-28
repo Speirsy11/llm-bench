@@ -36,14 +36,26 @@ export async function saveCredentialProfileAction(formData: FormData) {
 export async function launchExperimentAction(formData: FormData) {
   const actor = await getDashboardActor();
   const harnessId = requiredString(formData, "harness");
-  const matrix = dashboardMatrixForHarness(harnessId);
+  const runnerId = requiredString(formData, "runnerId");
+  const dashboard = getDashboardControlPlane().dashboard;
+  const runner = (await dashboard.listRunners(actor)).find(
+    ({ id }) => id === runnerId,
+  );
+  if (runner === undefined) {
+    throw new Error("Selected runner is unavailable.");
+  }
+  const matrix = dashboardMatrixForHarness(
+    harnessId,
+    runner.inventory,
+    formData.getAll("mcpProfile").map(String),
+  );
   const selectedRoutes =
     harnessId === "llmbench"
       ? selectedDashboardModelRoutes(formData.getAll("modelRoute").map(String))
       : matrix.modelRoutes;
-  await getDashboardControlPlane().dashboard.launchExperiment(actor, {
+  await dashboard.launchExperiment(actor, {
     name: requiredString(formData, "name"),
-    runnerId: requiredString(formData, "runnerId"),
+    runnerId,
     ...(harnessId === "llmbench"
       ? {
           credentialProfileId: requiredString(formData, "credentialProfileId"),

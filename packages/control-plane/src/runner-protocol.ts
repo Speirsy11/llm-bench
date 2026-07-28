@@ -5,7 +5,10 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 
-import type { RunnerPairingStartRequest } from "@llm-bench/contracts";
+import type {
+  RunnerInventory,
+  RunnerPairingStartRequest,
+} from "@llm-bench/contracts";
 
 import type { AuthContext } from "./access-policy";
 
@@ -27,6 +30,7 @@ export interface PairedRunner {
   name: string;
   publicKey: string;
   capabilities: RunnerPairingStartRequest["capabilities"];
+  inventory: RunnerInventory;
   environment: RunnerPairingStartRequest["environment"];
   tokenHash: string;
   revokedAt: Date | null;
@@ -45,7 +49,11 @@ export interface RunnerProtocolStore {
   findRunnerByTokenHash(tokenHash: string): Promise<PairedRunner | null>;
   findRunnerById(runnerId: string): Promise<PairedRunner | null>;
   revokeRunner(runnerId: string, revokedAt: Date): Promise<void>;
-  recordHeartbeat(runnerId: string, lastSeenAt: Date): Promise<void>;
+  recordHeartbeat(
+    runnerId: string,
+    lastSeenAt: Date,
+    inventory: RunnerInventory,
+  ): Promise<void>;
   approvePairing(
     pairing: RunnerPairingRecord,
     runner: PairedRunner,
@@ -96,11 +104,12 @@ export function createInMemoryRunnerProtocolStore(): InMemoryRunnerProtocolStore
       runner.status = "disabled";
       return Promise.resolve();
     },
-    recordHeartbeat(runnerId, lastSeenAt) {
+    recordHeartbeat(runnerId, lastSeenAt, inventory) {
       const runner = requiredInMemoryRunner(runners, runnerId);
       if (runner.revokedAt === null) {
         runner.status = "online";
         runner.lastSeenAt = lastSeenAt;
+        runner.inventory = structuredClone(inventory);
       }
       return Promise.resolve();
     },
@@ -189,6 +198,7 @@ export function createRunnerProtocolService({
         name: pairing.request.name,
         publicKey: pairing.request.publicKey,
         capabilities: pairing.request.capabilities,
+        inventory: structuredClone(pairing.request.inventory),
         environment: pairing.request.environment,
         tokenHash: "",
         revokedAt: null,
@@ -253,8 +263,11 @@ export function createRunnerProtocolService({
       await store.revokeRunner(runner.id, now());
     },
 
-    async heartbeat(runner: PairedRunner): Promise<void> {
-      await store.recordHeartbeat(runner.id, now());
+    async heartbeat(
+      runner: PairedRunner,
+      inventory: RunnerInventory,
+    ): Promise<void> {
+      await store.recordHeartbeat(runner.id, now(), inventory);
     },
   };
 }

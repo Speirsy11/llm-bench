@@ -59,6 +59,7 @@ describe("dashboard page", () => {
         environment: {
           harnessVersions: { codex: "0.142.1", claude: "2.1.198" },
         },
+        inventory: { plugins: [], mcpProfiles: [] },
       },
     ]);
     mocks.listCredentialProfiles.mockResolvedValue([
@@ -94,11 +95,13 @@ describe("dashboard page", () => {
         id: "runner-offline",
         status: "offline",
         environment: { harnessVersions: {} },
+        inventory: { plugins: [], mcpProfiles: [] },
       },
       {
         id: "runner-selected",
         status: "online",
         environment: { harnessVersions: { codex: "0.142.1" } },
+        inventory: { plugins: [], mcpProfiles: [] },
       },
     ]);
     mocks.listCredentialProfiles.mockResolvedValue([
@@ -140,11 +143,13 @@ describe("dashboard page", () => {
         id: "runner-offline",
         status: "offline",
         environment: { harnessVersions: {} },
+        inventory: { plugins: [], mcpProfiles: [] },
       },
       {
         id: "runner-online",
         status: "online",
         environment: { harnessVersions: { codex: "0.142.1" } },
+        inventory: { plugins: [], mcpProfiles: [] },
       },
     ]);
 
@@ -170,6 +175,7 @@ describe("dashboard page", () => {
         environment: {
           harnessVersions: { codex: "0.142.1", claude: "2.1.198" },
         },
+        inventory: { plugins: [], mcpProfiles: [] },
       },
     ]);
     mocks.previewExperiment.mockImplementation(
@@ -209,6 +215,7 @@ describe("dashboard page", () => {
       {
         id: "runner-1",
         environment: { harnessVersions: { codex: "unknown" } },
+        inventory: { plugins: [], mcpProfiles: [] },
       },
     ]);
 

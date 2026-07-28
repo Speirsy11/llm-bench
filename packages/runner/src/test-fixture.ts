@@ -5,7 +5,7 @@ import {
   repairScenario,
 } from "@llm-bench/repository-repair";
 
-/** A protocol-v2 lease for tests that exercise transport rather than execution. */
+/** A current-protocol lease for tests that exercise transport rather than execution. */
 export function runnerLeaseFixture(
   overrides: Partial<RunnerLease> = {},
 ): RunnerLease {

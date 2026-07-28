@@ -1,0 +1,47 @@
+{
+  "name": "@speirsy11/llm-bench-harness-sdk",
+  "version": "0.1.0",
+  "description": "Schemas and JSONL helpers for LLMBench executable harness plugins.",
+  "type": "module",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "build": "node -e \"const fs = require('node:fs'); fs.rmSync('dist', { force: true, recursive: true }); fs.rmSync('.cache/build.tsbuildinfo', { force: true })\" && tsc -p tsconfig.build.json && esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js",
+    "clean": "git clean -xdf .cache .turbo dist node_modules",
+    "format": "prettier --check . --ignore-path ../../.gitignore",
+    "lint": "eslint --flag unstable_native_nodejs_ts_config --cache --cache-location .cache/.eslintcache",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:pack": "pnpm build && node scripts/verify-package.mjs",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "@llm-bench/eslint-config": "workspace:*",
+    "@llm-bench/prettier-config": "workspace:*",
+    "@llm-bench/tsconfig": "workspace:*",
+    "@llm-bench/vitest-config": "workspace:*",
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "esbuild": "0.25.11",
+    "eslint": "catalog:",
+    "prettier": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "prettier": "@llm-bench/prettier-config"
+}

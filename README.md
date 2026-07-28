@@ -6,7 +6,7 @@ harnesses, and toolsets under reproducible conditions.
 The `tooling/` and `turbo/` directories provide the shared quality baseline used
 by every package. The product is split into provider-neutral contracts, a hosted
 control plane and dashboard, a local runner, repository-repair fixtures and
-grading, and interchangeable harness adapters. Runner protocol `2.0` leases an
+grading, and interchangeable harness adapters. Runner protocol `3.0` leases an
 immutable workload, target, toolset, limits, and runner-bound credential. The
 runner validates those inputs against its local corpus before selecting
 LLMBench, Codex, or Claude; Pi currently rejects agentic work before process
@@ -51,9 +51,17 @@ node packages/runner/dist/cli.cjs doctor
 
 The runner supports macOS and Linux with Node 22 or newer. See the
 [runner operations guide](packages/runner/README.md) for local state, native
-harness prerequisites, protocol-v2 migration, and troubleshooting. See the
+harness prerequisites, protocol migration, and troubleshooting. See the
 [crypto package guide](packages/crypto/README.md) for the browser-sealing and
 plaintext boundaries.
+
+Runner operators can also install versioned executable harness plugins and
+stdio MCP profiles locally. Protocol-3 pairing and heartbeats expose only
+sanitized, content-hashed inventory; executable installation and secret
+references never cross into the dashboard. See the
+[plugin SDK](packages/harness-sdk/README.md), the
+[example executable plugin](packages/example-harness-plugin/README.md), and the
+[MCP lifecycle package](packages/mcp/README.md).
 
 ## Workspace layout
 

@@ -11,6 +11,7 @@ const saveCredentialProfile = vi.fn();
 const launchExperiment = vi.fn();
 const cancelJob = vi.fn();
 const retryJob = vi.fn();
+const listRunners = vi.fn();
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("./auth", () => ({
@@ -26,6 +27,7 @@ vi.mock("./runtime", () => ({
     dashboard: {
       saveCredentialProfile,
       launchExperiment,
+      listRunners,
       cancelJob,
       retryJob,
     },
@@ -38,6 +40,10 @@ describe("dashboard credential action", () => {
     launchExperiment.mockReset();
     cancelJob.mockReset();
     retryJob.mockReset();
+    listRunners.mockReset();
+    listRunners.mockResolvedValue([
+      { id: "runner-1", inventory: { plugins: [], mcpProfiles: [] } },
+    ]);
   });
 
   it("rejects malformed masked metadata before persistence", async () => {
@@ -205,6 +211,117 @@ describe("dashboard credential action", () => {
     await expect(cancelJobAction(new FormData())).rejects.toThrow(
       "jobId is required",
     );
+  });
+
+  it("re-reads the owned runner inventory before launching an advertised plugin", async () => {
+    listRunners.mockResolvedValue([
+      {
+        id: "runner-1",
+        inventory: {
+          plugins: [
+            {
+              protocolVersion: "1.0.0",
+              contentHash: "a".repeat(64),
+              manifest: {
+                id: "example-repair",
+                version: "2.0.0",
+                capabilities: ["workspaces", "files", "mcp"],
+                modelRoutes: [
+                  {
+                    id: "example-local",
+                    provider: "example",
+                    model: "deterministic",
+                  },
+                ],
+              },
+            },
+          ],
+          mcpProfiles: [
+            {
+              id: "github",
+              version: "1.0.0",
+              contentHash: "b".repeat(64),
+              tools: ["issues_list"],
+            },
+          ],
+        },
+      },
+    ]);
+    const launch = new FormData();
+    launch.set("name", "Plugin repair");
+    launch.set("runnerId", "runner-1");
+    launch.set("harness", "example-repair");
+    launch.set("spendConfirmed", "on");
+    launch.append("mcpProfile", "github");
+
+    await launchExperimentAction(launch);
+
+    expect(launchExperiment).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        harnesses: [expect.objectContaining({ id: "example-repair" })],
+        toolsets: [
+          expect.objectContaining({
+            mcpProfiles: [
+              {
+                id: "github",
+                version: "1.0.0",
+                contentHash: "b".repeat(64),
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("rejects hidden plugin and MCP identifiers absent from the owned inventory", async () => {
+    const launch = new FormData();
+    launch.set("name", "Untrusted plugin");
+    launch.set("runnerId", "runner-1");
+    launch.set("harness", "not-installed");
+    launch.set("spendConfirmed", "on");
+
+    await expect(launchExperimentAction(launch)).rejects.toThrow(
+      "Unsupported dashboard harness: not-installed.",
+    );
+    expect(launchExperiment).not.toHaveBeenCalled();
+  });
+
+  it("rejects an MCP profile that the selected runner did not advertise", async () => {
+    listRunners.mockResolvedValue([
+      {
+        id: "runner-1",
+        inventory: {
+          plugins: [
+            {
+              protocolVersion: "1.0.0",
+              contentHash: "a".repeat(64),
+              manifest: {
+                id: "example-repair",
+                version: "2.0.0",
+                capabilities: ["mcp"],
+                modelRoutes: [
+                  { id: "example", provider: "example", model: "local" },
+                ],
+              },
+            },
+          ],
+          mcpProfiles: [],
+        },
+      },
+    ]);
+    const launch = new FormData();
+    launch.set("name", "Untrusted MCP");
+    launch.set("runnerId", "runner-1");
+    launch.set("harness", "example-repair");
+    launch.set("spendConfirmed", "on");
+    launch.append("mcpProfile", "not-installed");
+
+    await expect(launchExperimentAction(launch)).rejects.toThrow(
+      "Unknown MCP profile for runner: not-installed.",
+    );
+    expect(launchExperiment).not.toHaveBeenCalled();
   });
 });
 

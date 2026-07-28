@@ -11,6 +11,28 @@ import {
 } from "./runner-protocol";
 
 const runnerPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+const inventory = {
+  plugins: [
+    {
+      protocolVersion: "1.0",
+      contentHash: "c".repeat(64),
+      manifest: {
+        id: "example-repair",
+        version: "1.0.0",
+        capabilities: ["response_generation", "workspaces", "files"],
+        modelRoutes: [],
+      },
+    },
+  ],
+  mcpProfiles: [
+    {
+      id: "filesystem",
+      version: "1.2.0",
+      contentHash: "d".repeat(64),
+      tools: ["read_file"],
+    },
+  ],
+};
 
 const execution = {
   workload: {
@@ -93,6 +115,7 @@ describe("runner protocol", () => {
       name: "workstation",
       publicKey: runnerPublicKey,
       capabilities: ["workspaces", "files"],
+      inventory,
       environment: {
         os: "linux",
         architecture: "arm64",
@@ -110,6 +133,20 @@ describe("runner protocol", () => {
       RunnerPairingStartRequestSchema.parse({
         ...input,
         environment: { ...input.environment, hostname: "private-host" },
+      }),
+    ).toThrow();
+    expect(() =>
+      RunnerPairingStartRequestSchema.parse({
+        ...input,
+        inventory: {
+          ...inventory,
+          mcpProfiles: [
+            {
+              ...inventory.mcpProfiles[0],
+              executable: "/private/bin/mcp-server",
+            },
+          ],
+        },
       }),
     ).toThrow();
   });
@@ -163,8 +200,9 @@ describe("runner protocol", () => {
     ).toMatchObject({ status: "approved" });
     expect(() =>
       RunnerHeartbeatRequestSchema.parse({
-        protocolVersion: "3.0",
+        protocolVersion: "99.0",
         status: "online",
+        inventory,
       }),
     ).toThrow();
   });

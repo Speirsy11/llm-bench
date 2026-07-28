@@ -8,9 +8,15 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { PluginMessage } from "@speirsy11/llm-bench-harness-sdk";
+import { encodeProtocolLine } from "@speirsy11/llm-bench-harness-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { BenchmarkEvent, RunnerLease } from "@llm-bench/contracts";
+import type {
+  BenchmarkEvent,
+  RunnerInventory,
+  RunnerLease,
+} from "@llm-bench/contracts";
 import type {
   ProcessRunner,
   ProcessRunRequest,
@@ -27,6 +33,16 @@ import { TracerExecutor } from "./tracer-executor";
 
 const RUNNER_ID = "70b70847-ec1c-4aeb-ac0f-bf7db0328efe";
 const OTHER_RUNNER_ID = "f4a6453c-cdd4-405b-9733-39af0f6d829e";
+
+function firstPlugin(
+  inventory: RunnerInventory,
+): RunnerInventory["plugins"][number] {
+  const plugin = inventory.plugins[0];
+  if (plugin === undefined) {
+    throw new Error("Expected a plugin inventory fixture.");
+  }
+  return plugin;
+}
 
 describe("TracerExecutor", () => {
   const roots: string[] = [];
@@ -195,6 +211,385 @@ describe("TracerExecutor", () => {
       expect(JSON.stringify(request)).not.toContain("must-never-be-opened");
     },
   );
+
+  it("executes an immutable local plugin with only explicitly granted credentials", async () => {
+    const root = await temporaryRoot();
+    const lease = pluginLease();
+    const process = new PluginProcessRunner("completed", {
+      checkpoint: {
+        sequence: 2,
+        resumable: true,
+        state: { cursor: "two" },
+      },
+    });
+    const inventory = {
+      plugins: [
+        {
+          protocolVersion: lease.execution.target.plugin?.protocolVersion ?? "",
+          contentHash: lease.execution.target.plugin?.contentHash ?? "",
+          manifest: structuredClone(lease.execution.target.harness),
+        },
+      ],
+      mcpProfiles: [],
+    };
+
+    const saved: RunnerLease["checkpoint"][] = [];
+    const result = await new TracerExecutor(root, {
+      inventory,
+      pluginProcessRunner: process,
+      pluginRegistry: {
+        resolveExecution: () =>
+          Promise.resolve({
+            ...firstPlugin(inventory),
+            argv: ["/opt/example-plugin"],
+            credentialGrants: { EXAMPLE_TOKEN: "RUNNER_EXAMPLE_TOKEN" },
+          }),
+      },
+      resolvePluginCredential: (name) =>
+        Promise.resolve(
+          name === "RUNNER_EXAMPLE_TOKEN" ? "granted" : undefined,
+        ),
+    }).execute(lease, {
+      ...context(),
+      saveCheckpoint: (checkpoint) => {
+        saved.push(checkpoint);
+        return Promise.resolve();
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "completed",
+      observations: [{ metricId: "hidden_test_pass_ratio", value: 1 }],
+    });
+    expect(process.request?.env).not.toHaveProperty("HOME");
+    expect(process.request?.env).not.toHaveProperty("EXAMPLE_TOKEN");
+    expect(process.inputMessages()[1]).toMatchObject({
+      credentials: { EXAMPLE_TOKEN: "granted" },
+    });
+    expect(saved).toEqual([
+      { sequence: 2, resumable: true, state: { cursor: "two" } },
+    ]);
+  });
+
+  it("stops every started MCP process when plugin execution fails", async () => {
+    const root = await temporaryRoot();
+    const lease = pluginLease();
+    const profileReference = {
+      id: "filesystem",
+      version: "1.0.0",
+      contentHash: "c".repeat(64),
+    };
+    lease.execution.target.harness.capabilities.push("mcp");
+    lease.execution.target.toolset.mcpProfiles = [profileReference];
+    const inventory = {
+      plugins: [
+        {
+          protocolVersion: lease.execution.target.plugin?.protocolVersion ?? "",
+          contentHash: lease.execution.target.plugin?.contentHash ?? "",
+          manifest: structuredClone(lease.execution.target.harness),
+        },
+      ],
+      mcpProfiles: [{ ...profileReference, tools: ["read_file"] }],
+    };
+    let probes = 0;
+    let stops = 0;
+
+    const result = await new TracerExecutor(root, {
+      inventory,
+      pluginProcessRunner: new PluginProcessRunner("failed", { mcp: true }),
+      pluginRegistry: {
+        resolveExecution: () =>
+          Promise.resolve({
+            ...firstPlugin(inventory),
+            argv: ["/opt/example-plugin"],
+            credentialGrants: {},
+          }),
+      },
+      mcpRegistry: {
+        get: () =>
+          Promise.resolve({
+            metadata: {
+              protocolVersion: "1",
+              ...profileReference,
+              label: "Filesystem",
+              capabilities: ["tools"],
+              tools: ["read_file"],
+            },
+            local: { argv: ["/opt/mcp"], secretReferences: {} },
+          }),
+      },
+      startMcp: () =>
+        Promise.resolve({
+          probe: () => {
+            probes += 1;
+            return Promise.resolve({});
+          },
+          stop: () => {
+            stops += 1;
+            return Promise.resolve();
+          },
+        }),
+    }).execute(lease, context());
+
+    expect(result.status).toBe("failed");
+    expect({ probes, stops }).toEqual({ probes: 1, stops: 1 });
+  });
+
+  it("maps a cancelled plugin without an error through the harness failure boundary", async () => {
+    const root = await temporaryRoot();
+    const lease = pluginLease();
+    const inventory = pluginInventory(lease);
+
+    await expect(
+      new TracerExecutor(root, {
+        inventory,
+        pluginProcessRunner: new PluginProcessRunner("cancelled"),
+        pluginRegistry: {
+          resolveExecution: () =>
+            Promise.resolve({
+              ...firstPlugin(inventory),
+              argv: ["/plugin"],
+              credentialGrants: {},
+            }),
+        },
+      }).execute(lease, context()),
+    ).resolves.toMatchObject({ status: "failed" });
+  });
+
+  it("uses the default job-scoped MCP session and resolver", async () => {
+    const root = await temporaryRoot();
+    const lease = pluginLease();
+    lease.execution.target.harness.capabilities.push("mcp");
+    const reference = {
+      id: "real-mcp",
+      version: "1.0.0",
+      contentHash: "d".repeat(64),
+    };
+    lease.execution.target.toolset.mcpProfiles = [reference];
+    const inventory = pluginInventory(lease, [{ ...reference, tools: [] }]);
+    const server = join(root, "mcp-server.mjs");
+    await writeFile(
+      server,
+      `import { createInterface } from "node:readline";
+createInterface({ input: process.stdin }).once("line", (line) => {
+  const request = JSON.parse(line);
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { capabilities: {} } }) + "\\n");
+});`,
+    );
+
+    await expect(
+      new TracerExecutor(root, {
+        inventory,
+        pluginProcessRunner: new PluginProcessRunner("completed", {
+          mcp: true,
+        }),
+        pluginRegistry: {
+          resolveExecution: () =>
+            Promise.resolve({
+              ...firstPlugin(inventory),
+              argv: ["/plugin"],
+              credentialGrants: {},
+            }),
+        },
+        mcpRegistry: {
+          get: () =>
+            Promise.resolve({
+              metadata: {
+                protocolVersion: "1",
+                ...reference,
+                label: "Real MCP",
+                capabilities: [],
+                tools: [],
+              },
+              local: {
+                argv: [process.execPath, server],
+                secretReferences: {},
+              },
+            }),
+        },
+      }).execute(lease, context()),
+    ).resolves.toMatchObject({ status: "completed" });
+
+    await expect(
+      new TracerExecutor(root, {
+        inventory,
+        pluginProcessRunner: new PluginProcessRunner("completed", {
+          mcp: true,
+        }),
+        pluginRegistry: {
+          resolveExecution: () =>
+            Promise.resolve({
+              ...firstPlugin(inventory),
+              argv: ["/plugin"],
+              credentialGrants: {},
+            }),
+        },
+        mcpRegistry: {
+          get: () =>
+            Promise.resolve({
+              metadata: {
+                protocolVersion: "1",
+                ...reference,
+                label: "Real MCP",
+                capabilities: [],
+                tools: [],
+              },
+              local: {
+                argv: [process.execPath, server],
+                secretReferences: { MCP_TOKEN: "missing" },
+              },
+            }),
+        },
+      }).execute(lease, context()),
+    ).resolves.toMatchObject({ status: "failed" });
+  });
+
+  it("fails closed for missing, stale, or unresolved local extension state", async () => {
+    const root = await temporaryRoot();
+    const base = pluginLease();
+    const inventory = pluginInventory(base);
+    await expect(
+      new TracerExecutor(root, { inventory }).execute(base, context()),
+    ).rejects.toThrow("plugin registry is unavailable");
+    await expect(
+      new TracerExecutor(root, {
+        inventory,
+        pluginRegistry: {
+          resolveExecution: () =>
+            Promise.resolve({
+              ...firstPlugin(inventory),
+              contentHash: "e".repeat(64),
+              argv: ["/plugin"],
+              credentialGrants: {},
+            }),
+        },
+      }).execute(pluginLease(), context()),
+    ).rejects.toThrow("no longer matches");
+    await expect(
+      new TracerExecutor(root, {
+        inventory,
+        pluginRegistry: {
+          resolveExecution: () =>
+            Promise.resolve({
+              ...firstPlugin(inventory),
+              argv: ["/plugin"],
+              credentialGrants: { TOKEN: "MISSING_TOKEN" },
+            }),
+        },
+      }).execute(pluginLease(), context()),
+    ).rejects.toThrow("could not be resolved");
+
+    const withMcp = pluginLease();
+    withMcp.execution.target.harness.capabilities.push("mcp");
+    const reference = {
+      id: "filesystem",
+      version: "1.0.0",
+      contentHash: "c".repeat(64),
+    };
+    withMcp.execution.target.toolset.mcpProfiles = [reference];
+    const mcpInventory = pluginInventory(withMcp, [
+      { ...reference, tools: [] },
+    ]);
+    const pluginRegistry = {
+      resolveExecution: () =>
+        Promise.resolve({
+          ...firstPlugin(mcpInventory),
+          argv: ["/plugin"] as [string],
+          credentialGrants: {},
+        }),
+    };
+    await expect(
+      new TracerExecutor(root, {
+        inventory: mcpInventory,
+        pluginRegistry,
+        pluginProcessRunner: new PluginProcessRunner("completed"),
+      }).execute(withMcp, context()),
+    ).resolves.toMatchObject({ status: "failed" });
+    await expect(
+      new TracerExecutor(root, {
+        inventory: mcpInventory,
+        pluginRegistry,
+        pluginProcessRunner: new PluginProcessRunner("completed"),
+        mcpRegistry: {
+          get: () =>
+            Promise.resolve({
+              metadata: {
+                protocolVersion: "1",
+                ...reference,
+                version: "2.0.0",
+                label: "Filesystem",
+                capabilities: [],
+                tools: [],
+              },
+              local: { argv: ["/mcp"], secretReferences: {} },
+            }),
+        },
+      }).execute(withMcp, context()),
+    ).resolves.toMatchObject({ status: "failed" });
+  });
+
+  it("cleans up already-started MCP sessions when a later profile cannot start", async () => {
+    const root = await temporaryRoot();
+    const lease = pluginLease();
+    lease.execution.target.harness.capabilities.push("mcp");
+    const references = ["first", "second"].map((id, index) => ({
+      id,
+      version: "1.0.0",
+      contentHash: String(index + 1).repeat(64),
+    }));
+    lease.execution.target.toolset.mcpProfiles = references;
+    const inventory = pluginInventory(
+      lease,
+      references.map((reference) => ({ ...reference, tools: [] })),
+    );
+    let stops = 0;
+    let starts = 0;
+
+    const result = await new TracerExecutor(root, {
+      inventory,
+      pluginRegistry: {
+        resolveExecution: () =>
+          Promise.resolve({
+            ...firstPlugin(inventory),
+            argv: ["/plugin"],
+            credentialGrants: {},
+          }),
+      },
+      pluginProcessRunner: new PluginProcessRunner("completed"),
+      mcpRegistry: {
+        get: (id) => {
+          const reference = references.find((item) => item.id === id);
+          if (reference === undefined) {
+            throw new Error(`Missing MCP reference '${id}'.`);
+          }
+          return Promise.resolve({
+            metadata: {
+              protocolVersion: "1",
+              ...reference,
+              label: id,
+              capabilities: [],
+              tools: [],
+            },
+            local: { argv: ["/mcp"], secretReferences: {} },
+          });
+        },
+      },
+      startMcp: () => {
+        starts += 1;
+        if (starts === 2) return Promise.reject(new Error("startup failed"));
+        return Promise.resolve({
+          probe: () => Promise.resolve({}),
+          stop: () => {
+            stops += 1;
+            return Promise.resolve();
+          },
+        });
+      },
+    }).execute(lease, context());
+
+    expect(result.status).toBe("failed");
+    expect({ starts, stops }).toEqual({ starts: 2, stops: 1 });
+  });
 
   it.each(["codex", "claude"] as const)(
     "persists the %s native checkpoint through the runner execution context",
@@ -441,7 +836,13 @@ describe("TracerExecutor", () => {
       "Runner identity is required",
     ]);
     const mcp = leaseFor("llmbench", { credential: { ...credential } });
-    mcp.execution.target.toolset.mcpProfiles = ["fixture"];
+    mcp.execution.target.toolset.mcpProfiles = [
+      {
+        id: "fixture",
+        version: "1.0.0",
+        contentHash: "a".repeat(64),
+      },
+    ];
     cases.push([mcp, new TracerExecutor(root, { identity }), "MCP profiles"]);
 
     for (const [lease, executor, message] of cases) {
@@ -753,6 +1154,51 @@ function leaseFor(
   };
 }
 
+function pluginLease(): RunnerLease {
+  const lease = leaseFor("codex");
+  const route = {
+    id: "example-local",
+    provider: "example",
+    model: "deterministic",
+  };
+  lease.execution.target = {
+    modelRoute: route,
+    harness: {
+      id: "example-plugin",
+      version: "1.0.0",
+      capabilities: ["response_generation", "workspaces", "files", "shell"],
+      modelRoutes: [route],
+    },
+    toolset: {
+      id: "plugin",
+      version: "1.0.0",
+      tools: ["read_file", "apply_patch"],
+      mcpProfiles: [],
+    },
+    plugin: {
+      protocolVersion: "1.0.0",
+      contentHash: "b".repeat(64),
+    },
+  };
+  return lease;
+}
+
+function pluginInventory(
+  lease: RunnerLease,
+  mcpProfiles: RunnerInventory["mcpProfiles"] = [],
+): RunnerInventory {
+  return {
+    plugins: [
+      {
+        protocolVersion: lease.execution.target.plugin?.protocolVersion ?? "",
+        contentHash: lease.execution.target.plugin?.contentHash ?? "",
+        manifest: structuredClone(lease.execution.target.harness),
+      },
+    ],
+    mcpProfiles,
+  };
+}
+
 function context(checkpoint: RunnerLease["checkpoint"] = null) {
   return {
     signal: new AbortController().signal,
@@ -839,5 +1285,97 @@ class RepairProcessRunner implements ProcessRunner {
       outputBytes: 1,
       cancelled: this.outcome === "cancelled",
     };
+  }
+}
+
+class PluginProcessRunner implements ProcessRunner {
+  request: ProcessRunRequest | undefined;
+
+  constructor(
+    private readonly status: "completed" | "failed" | "cancelled",
+    private readonly options: {
+      checkpoint?: {
+        sequence: number;
+        resumable: boolean;
+        state: Record<string, unknown>;
+      };
+      mcp?: boolean;
+    } = {},
+  ) {}
+
+  async run(request: ProcessRunRequest): Promise<ProcessRunResult> {
+    this.request = request;
+    const fixture = repairFixture(DEFAULT_FIXTURE_ID);
+    if (this.status === "completed") {
+      await writeFile(
+        join(request.cwd, fixture.modulePath),
+        fixture.knownPatch,
+      );
+    }
+    const handshake: PluginMessage = {
+      kind: "handshake_reply" as const,
+      protocolVersion: "1.0.0",
+      manifest: {
+        id: "example-plugin",
+        name: "Example plugin",
+        version: "1.0.0",
+        capabilities: [
+          "response_generation" as const,
+          "workspaces" as const,
+          "files" as const,
+          "shell" as const,
+          ...(this.options.mcp ? (["mcp"] as const) : []),
+        ],
+        modelRoutes: [
+          {
+            id: "example-local",
+            provider: "example",
+            model: "deterministic",
+          },
+        ],
+      },
+    };
+    const terminal: PluginMessage =
+      this.status === "completed"
+        ? {
+            kind: "run_result",
+            protocolVersion: "1.0.0",
+            status: "completed",
+            output: "repaired",
+            observations: [],
+            checkpoint: this.options.checkpoint ?? null,
+            metadata: {},
+          }
+        : this.status === "failed"
+          ? {
+              kind: "run_result",
+              protocolVersion: "1.0.0",
+              status: "failed",
+              error: "plugin failed",
+              checkpoint: null,
+            }
+          : {
+              kind: "run_result",
+              protocolVersion: "1.0.0",
+              status: "cancelled",
+              checkpoint: null,
+            };
+    return {
+      exitCode: 0,
+      signal: null,
+      stdoutLines: [handshake, terminal].map((message) =>
+        encodeProtocolLine(message).trimEnd(),
+      ),
+      stderr: "",
+      outputBytes: 0,
+      cancelled: false,
+    };
+  }
+
+  inputMessages(): unknown[] {
+    return (this.request?.stdin ?? "")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as unknown);
   }
 }

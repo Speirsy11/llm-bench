@@ -6,6 +6,7 @@ import { VercelBlobUploader } from "./blob-uploader";
 import { RunnerCli } from "./cli-app";
 import { runDaemonLoop } from "./daemon";
 import { runnerHome } from "./env";
+import { RunnerExtensionManager } from "./extensions";
 import {
   pollRunnerPairing,
   RunnerHttpTransport,
@@ -17,6 +18,7 @@ import { TracerExecutor } from "./tracer-executor";
 import { RunnerWorker } from "./worker";
 
 const state = new RunnerStateStore(runnerHome());
+const extensions = new RunnerExtensionManager(state.root);
 
 async function main(): Promise<void> {
   const arguments_ = process.argv.slice(2);
@@ -33,7 +35,8 @@ async function main(): Promise<void> {
       start: (input) => startRunnerPairing(input),
       poll: (serverUrl, deviceCode) => pollRunnerPairing(serverUrl, deviceCode),
     },
-    transport: (credentials) => new RunnerHttpTransport(credentials),
+    transport: (credentials, inventory) =>
+      new RunnerHttpTransport({ ...credentials, inventory: () => inventory }),
     lifecycle: {
       start: () => {
         const executable = process.argv[1];
@@ -61,6 +64,7 @@ async function main(): Promise<void> {
       },
     },
     sleep,
+    extensions,
   });
   await cli.run(arguments_);
 }
@@ -68,7 +72,11 @@ async function main(): Promise<void> {
 async function runDaemon(): Promise<void> {
   const credentials = await state.credentials();
   if (!credentials) throw new Error("Runner is not logged in.");
-  const transport = new RunnerHttpTransport(credentials);
+  const inventory = await extensions.inventory();
+  const transport = new RunnerHttpTransport({
+    ...credentials,
+    inventory: () => inventory,
+  });
   const worker = new RunnerWorker({
     state,
     transport,
@@ -78,6 +86,11 @@ async function runDaemon(): Promise<void> {
         publicKey: credentials.publicKey,
         privateKey: credentials.privateKey,
       },
+      inventory,
+      pluginRegistry: extensions.pluginRegistry,
+      resolvePluginCredential: (name) => Promise.resolve(process.env[name]),
+      mcpRegistry: extensions.mcpRegistry,
+      resolveMcpSecret: (name) => Promise.resolve(process.env[name]),
     }),
     artifactUploader: new VercelBlobUploader(
       credentials,

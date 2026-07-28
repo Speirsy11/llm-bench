@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { RunnerExecution } from "./runner-protocol";
+import type { RunnerExecution, RunnerInventory } from "./runner-protocol";
 import {
   LLMBENCH_REPOSITORY_TOOLS,
   nativeHarnessCliBlocker,
@@ -10,6 +10,12 @@ import {
 
 const required = REPOSITORY_REPAIR_REQUIRED_CAPABILITIES;
 const tools = LLMBENCH_REPOSITORY_TOOLS;
+const filesystemProfile = {
+  id: "filesystem",
+  version: "1.0.0",
+  contentHash:
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+};
 
 function target(harnessId = "llmbench"): RunnerExecution["target"] {
   const modelRoute = {
@@ -64,6 +70,64 @@ describe("targetCompatibilityBlockers", () => {
     ).toEqual(["Harness unknown is unsupported."]);
   });
 
+  it("accepts only the exact locally advertised plugin and MCP identities", () => {
+    const pluginTarget = target("example-repair");
+    pluginTarget.harness.capabilities.push("mcp");
+    pluginTarget.toolset = {
+      id: "plugin-tools",
+      version: "1.0.0",
+      tools: ["read_file"],
+      mcpProfiles: [filesystemProfile],
+    };
+    pluginTarget.plugin = {
+      protocolVersion: "1.0.0",
+      contentHash: "b".repeat(64),
+    };
+    const inventory: RunnerInventory = {
+      plugins: [
+        {
+          protocolVersion: pluginTarget.plugin.protocolVersion,
+          contentHash: pluginTarget.plugin.contentHash,
+          manifest: structuredClone(pluginTarget.harness),
+        },
+      ],
+      mcpProfiles: [
+        {
+          ...filesystemProfile,
+          tools: ["read_file"],
+        },
+      ],
+    };
+
+    expect(
+      targetCompatibilityBlockers(pluginTarget, required, tools, {}, inventory),
+    ).toEqual([]);
+
+    inventory.plugins[0]?.manifest.capabilities.reverse();
+    inventory.plugins[0]?.manifest.modelRoutes.reverse();
+    expect(
+      targetCompatibilityBlockers(pluginTarget, required, tools, {}, inventory),
+    ).toEqual([]);
+
+    pluginTarget.plugin.contentHash = "c".repeat(64);
+    expect(
+      targetCompatibilityBlockers(pluginTarget, required, tools, {}, inventory),
+    ).toEqual([
+      "Plugin example-repair is not installed with protocol 1.0.0 and the selected content hash.",
+    ]);
+
+    pluginTarget.plugin.contentHash = inventory.plugins[0]?.contentHash ?? "";
+    pluginTarget.toolset.mcpProfiles[0] = {
+      ...filesystemProfile,
+      contentHash: "d".repeat(64),
+    };
+    expect(
+      targetCompatibilityBlockers(pluginTarget, required, tools, {}, inventory),
+    ).toEqual([
+      "MCP profile filesystem 1.0.0 is not installed with the selected content hash.",
+    ]);
+  });
+
   it("reports route, capability, tool, and MCP mismatches", () => {
     const incompatible = target();
     incompatible.harness.modelRoutes[0] = {
@@ -72,7 +136,7 @@ describe("targetCompatibilityBlockers", () => {
     };
     incompatible.harness.capabilities = ["workspaces"];
     incompatible.toolset.tools = ["read_file"];
-    incompatible.toolset.mcpProfiles = ["filesystem"];
+    incompatible.toolset.mcpProfiles = [filesystemProfile];
 
     expect(targetCompatibilityBlockers(incompatible, required, tools)).toEqual([
       "Selected model route openrouter-gpt-4o is not declared by harness llmbench.",
@@ -84,7 +148,7 @@ describe("targetCompatibilityBlockers", () => {
 
     const native = target("claude");
     native.toolset.tools = ["read_file"];
-    native.toolset.mcpProfiles = ["filesystem"];
+    native.toolset.mcpProfiles = [filesystemProfile];
     expect(targetCompatibilityBlockers(native, required, tools)).toEqual([
       "Harness claude uses native tools and cannot receive runner-managed tools.",
       "Harness claude does not support runner-managed MCP profiles.",

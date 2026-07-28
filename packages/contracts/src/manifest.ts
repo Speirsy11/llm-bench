@@ -42,11 +42,18 @@ export const ModelRouteSchema = z.strictObject({
 });
 export type ModelRoute = z.infer<typeof ModelRouteSchema>;
 
+export const McpProfileRefSchema = z.strictObject({
+  id: z.string().min(1),
+  version: z.string().min(1),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/u),
+});
+export type McpProfileRef = z.infer<typeof McpProfileRefSchema>;
+
 export const ToolsetSchema = z.strictObject({
   id: z.string().min(1),
   version: z.string().min(1),
   tools: z.array(z.string().min(1)),
-  mcpProfiles: z.array(z.string().min(1)),
+  mcpProfiles: z.array(McpProfileRefSchema),
 });
 export type Toolset = z.infer<typeof ToolsetSchema>;
 

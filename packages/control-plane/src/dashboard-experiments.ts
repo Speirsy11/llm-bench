@@ -10,6 +10,7 @@ import type {
   ModelRoute,
   RunnerEnvironment,
   RunnerExecution,
+  RunnerInventory,
   SealedCredential,
   Toolset,
 } from "@llm-bench/contracts";
@@ -185,6 +186,7 @@ export function createDashboardExperimentService(db: Database) {
         name: row.name,
         publicKey: row.publicKey,
         capabilities: row.capabilities as Capability[],
+        inventory: row.inventory,
         environment: row.environment as PairedRunner["environment"],
         revokedAt: row.revokedAt,
         status:
@@ -247,6 +249,11 @@ export function createDashboardExperimentService(db: Database) {
           preview.blockers[0] ?? "Experiment cannot be launched.",
         );
       }
+      const runner = await requireOwnedRunner(
+        db,
+        actor,
+        preview.input.runnerId,
+      );
       const targetInputs = expandRoundRobin(preview.input);
       return db.transaction(async (transaction) => {
         const credential = requiresHostedCredential(preview.input)
@@ -282,7 +289,11 @@ export function createDashboardExperimentService(db: Database) {
             })
             .returning();
           const target = (targetRows as [typeof targets.$inferSelect])[0];
-          const execution = executionSnapshotFor(item, credential);
+          const execution = executionSnapshotFor(
+            item,
+            credential,
+            runner.inventory,
+          );
           await transaction.insert(jobs).values({
             experimentId: experiment.id,
             targetId: target.id,
@@ -573,10 +584,11 @@ function executionSnapshotFor(
     toolset: Toolset;
   },
   credential: typeof credentialProfiles.$inferSelect | null,
+  inventory: RunnerInventory,
 ): RunnerExecution {
   return RunnerExecutionSchema.parse({
     workload: repositoryRepairWorkload,
-    target,
+    target: executionTargetForRunner(target, inventory),
     limits: repositoryRepairLimits,
     credential:
       target.harness.id === "llmbench" && credential
@@ -587,6 +599,27 @@ function executionSnapshotFor(
           }
         : null,
   });
+}
+
+const BUILT_IN_HARNESSES = new Set(["llmbench", "codex", "claude", "pi"]);
+
+/** Pins a dashboard-selected external harness to the runner advertisement. */
+export function executionTargetForRunner(
+  target: RunnerExecution["target"],
+  inventory: RunnerInventory,
+): RunnerExecution["target"] {
+  if (BUILT_IN_HARNESSES.has(target.harness.id)) return clone(target);
+  const installed = inventory.plugins.find(
+    ({ manifest }) => manifest.id === target.harness.id,
+  );
+  if (installed === undefined) return clone(target);
+  return {
+    ...clone(target),
+    plugin: {
+      protocolVersion: installed.protocolVersion,
+      contentHash: installed.contentHash,
+    },
+  };
 }
 
 function expandRoundRobin(input: ExperimentMatrixInput) {
@@ -636,11 +669,13 @@ function blockersFor(
     blockers.push(`Runner is missing ${runnerMissing.join(", ")}.`);
   }
   for (const target of expandRoundRobin(input)) {
+    const executionTarget = executionTargetForRunner(target, runner.inventory);
     for (const blocker of targetCompatibilityBlockers(
-      target,
+      executionTarget,
       repositoryRepairBenchmark.requiredCapabilities,
       LLMBENCH_REPOSITORY_TOOLS,
       (runner.environment as RunnerEnvironment).harnessVersions,
+      runner.inventory,
     )) {
       if (!blockers.includes(blocker)) blockers.push(blocker);
     }
