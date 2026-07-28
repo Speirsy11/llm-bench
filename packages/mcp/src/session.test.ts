@@ -158,17 +158,24 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   it("requires a supported negotiated protocol version", async () => {
     const root = await mkdtemp(join(tmpdir(), "llm-bench-mcp-session-"));
     roots.push(root);
+    const negotiationFixture = join(root, "negotiation.mjs");
+    await writeFile(
+      negotiationFixture,
+      `import { createInterface } from "node:readline";
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const request = JSON.parse(line);
+  const result = { capabilities: {} };
+  if (process.argv[2] !== "missing") result.protocolVersion = process.argv[2];
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+});`,
+    );
     for (const [name, protocolVersion] of [
       ["missing", undefined],
       ["unsupported", "2099-01-01"],
     ] as const) {
-      const fixture = join(root, `${name}.mjs`);
-      await writeFile(
-        fixture,
-        `import { createInterface } from "node:readline"; createInterface({ input: process.stdin }).on("line", (line) => { const request = JSON.parse(line); process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { capabilities: {}, ${protocolVersion === undefined ? "" : `protocolVersion: ${JSON.stringify(protocolVersion)}`} } }) + "\\n"); });`,
-      );
-      const session = await startMcpSession(profileFor(fixture), () =>
-        Promise.resolve(undefined),
+      const session = await startMcpSession(
+        profileFor(negotiationFixture, {}, [protocolVersion ?? name]),
+        () => Promise.resolve(undefined),
       );
       await expect(session.probe()).rejects.toThrow(
         "unsupported protocol version",
@@ -948,6 +955,12 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   it("rejects invalid JSON-RPC response shapes", async () => {
     const root = await mkdtemp(join(tmpdir(), "llm-bench-mcp-session-"));
     roots.push(root);
+    const fixture = join(root, "invalid-response.mjs");
+    await writeFile(
+      fixture,
+      `import { createInterface } from "node:readline";
+createInterface({ input: process.stdin }).on("line", () => process.stdout.write(process.argv[2] + "\\n"));`,
+    );
     for (const [index, response] of [
       "null",
       JSON.stringify({ jsonrpc: "2.0", id: 1 }),
@@ -958,13 +971,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         result: { capabilities: {}, protocolVersion: 1 },
       }),
     ].entries()) {
-      const fixture = join(root, `invalid-${index}.mjs`);
-      await writeFile(
-        fixture,
-        `import { createInterface } from "node:readline"; createInterface({ input: process.stdin }).on("line", () => process.stdout.write(${JSON.stringify(response + "\n")}));`,
-      );
-      const session = await startMcpSession(profileFor(fixture), () =>
-        Promise.resolve(undefined),
+      const session = await startMcpSession(
+        profileFor(fixture, {}, [response, String(index)]),
+        () => Promise.resolve(undefined),
       );
       await expect(session.probe()).rejects.toThrow(
         "invalid initialize response",
