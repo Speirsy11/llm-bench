@@ -688,9 +688,9 @@ function blockersFor(
   for (const target of expandRoundRobin(input)) {
     const executionTarget = executionTargetForRunner(target, runner.inventory);
     if (benchmark.kind === "response" && executionTarget.plugin !== undefined) {
-      blockers.push(
-        "Response execution for local harness plugins is not supported.",
-      );
+      const blocker =
+        "Response execution for local harness plugins is not supported.";
+      if (!blockers.includes(blocker)) blockers.push(blocker);
       continue;
     }
     for (const blocker of targetCompatibilityBlockers(

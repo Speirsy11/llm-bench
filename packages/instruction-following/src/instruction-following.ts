@@ -42,7 +42,7 @@ export class InstructionFollowingBenchmark extends ResponseBenchmark {
       throw new Error(`Unknown instruction-following case: ${caseId}`);
     }
 
-    const lines = response.trim().split(/\r?\n/u);
+    const lines = response.split(/\r?\n/u);
     const followsInstructions =
       lines.length === 3 &&
       lines.every((line) => {

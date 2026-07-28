@@ -236,11 +236,21 @@ export class TracerExecutor implements RunnerExecutor {
     });
 
     try {
+      const signal = responseRequestSignal(
+        lease,
+        context.signal,
+        this.options.deadline,
+      );
+      const run =
+        lease.execution.target.harness.id === "llmbench"
+          ? await this.llmBenchResponseRunner(lease, signal)
+          : (sample: { index: number }) =>
+              this.runNativeResponseSample(lease, signal, sample.index);
       const result = await executeResponseBenchmark({
         benchmark,
         responseCase,
         now,
-        run: (sample) => this.runResponseSample(lease, context, sample.index),
+        run,
       });
       const evidence = await artifactStore.put({
         jobId: lease.jobId,
@@ -282,14 +292,12 @@ export class TracerExecutor implements RunnerExecutor {
     }
   }
 
-  private async runResponseSample(
+  private async llmBenchResponseRunner(
     lease: ResponseLease,
-    context: Parameters<RunnerExecutor["execute"]>[1],
-    sampleIndex: number,
-  ): Promise<AdapterRunResult> {
-    const harnessId = lease.execution.target.harness.id;
-    if (harnessId === "llmbench") {
-      const { provider } = await this.openRouterProvider(lease);
+    signal: AbortSignal,
+  ): Promise<(sample: { index: number }) => Promise<AdapterRunResult>> {
+    const { provider } = await this.openRouterProvider(lease);
+    return async ({ index: sampleIndex }) => {
       const providerStartedAt = performance.now();
       const completion = await provider.complete(
         {
@@ -302,13 +310,7 @@ export class TracerExecutor implements RunnerExecutor {
           ],
           maxTokens: lease.execution.limits.maxTokens,
         },
-        {
-          signal: responseRequestSignal(
-            lease,
-            context.signal,
-            this.options.deadline,
-          ),
-        },
+        { signal },
       );
       const providerDurationMs = performance.now() - providerStartedAt;
       return {
@@ -326,8 +328,15 @@ export class TracerExecutor implements RunnerExecutor {
         events: [],
         metadata: { model: completion.model, sampleIndex },
       };
-    }
+    };
+  }
 
+  private runNativeResponseSample(
+    lease: ResponseLease,
+    signal: AbortSignal,
+    _sampleIndex: number,
+  ): Promise<AdapterRunResult> {
+    const harnessId = lease.execution.target.harness.id;
     const adapter =
       harnessId === "codex"
         ? new CodexHarness({
@@ -343,7 +352,7 @@ export class TracerExecutor implements RunnerExecutor {
               manifest: lease.execution.target.harness,
               runner: this.options.processRunners?.pi,
             });
-    return adapter.run(responseAdapterRequest(lease, context, this.root));
+    return adapter.run(responseAdapterRequest(lease, signal, this.root));
   }
 
   private async harnessFor(
@@ -845,7 +854,7 @@ function adapterRequest(
 
 function responseAdapterRequest(
   lease: ResponseLease,
-  context: Parameters<RunnerExecutor["execute"]>[1],
+  signal: AbortSignal,
   workspaceRoot: string,
 ): AdapterRunRequest {
   return {
@@ -859,7 +868,7 @@ function responseAdapterRequest(
     toolset: lease.execution.target.toolset,
     limits: lease.execution.limits,
     checkpoint: null,
-    signal: context.signal,
+    signal,
   };
 }
 

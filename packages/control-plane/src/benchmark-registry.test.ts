@@ -118,6 +118,8 @@ describe("benchmark registry", () => {
     });
     expect(benchmarkDefinitionForId("unknown")).toBeNull();
     expect(workloadForBenchmark("unknown")).toBeNull();
+    expect(workloadForBenchmark("toString")).toBeNull();
+    expect(workloadForBenchmark("constructor")).toBeNull();
     expect(limitsForBenchmark("unknown")).toBeNull();
   });
 });

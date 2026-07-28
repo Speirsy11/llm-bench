@@ -754,7 +754,7 @@ importers:
         version: 3.2.6(@types/node@22.18.12)(jiti@2.7.0)(jsdom@26.1.0(bufferutil@4.0.8)(utf-8-validate@6.0.4))(lightningcss@1.30.2)(terser@5.44.0)(tsx@4.22.4)(yaml@2.8.1)
 
   packages/runner:
-    devDependencies:
+    dependencies:
       '@llm-bench/claude-harness':
         specifier: workspace:*
         version: link:../claude-harness
@@ -767,9 +767,6 @@ importers:
       '@llm-bench/crypto':
         specifier: workspace:*
         version: link:../crypto
-      '@llm-bench/eslint-config':
-        specifier: workspace:*
-        version: link:../../tooling/eslint
       '@llm-bench/instruction-following':
         specifier: workspace:*
         version: link:../instruction-following
@@ -788,9 +785,6 @@ importers:
       '@llm-bench/pi-harness':
         specifier: workspace:*
         version: link:../pi-harness
-      '@llm-bench/prettier-config':
-        specifier: workspace:*
-        version: link:../../tooling/prettier
       '@llm-bench/process-harness':
         specifier: workspace:*
         version: link:../process-harness
@@ -803,21 +797,31 @@ importers:
       '@llm-bench/structured-output':
         specifier: workspace:*
         version: link:../structured-output
+      '@speirsy11/llm-bench-harness-sdk':
+        specifier: workspace:*
+        version: link:../harness-sdk
+      '@vercel/blob':
+        specifier: 2.5.0
+        version: 2.5.0
+      zod:
+        specifier: 'catalog:'
+        version: 4.1.12
+    devDependencies:
+      '@llm-bench/eslint-config':
+        specifier: workspace:*
+        version: link:../../tooling/eslint
+      '@llm-bench/prettier-config':
+        specifier: workspace:*
+        version: link:../../tooling/prettier
       '@llm-bench/tsconfig':
         specifier: workspace:*
         version: link:../../tooling/typescript
       '@llm-bench/vitest-config':
         specifier: workspace:*
         version: link:../../tooling/vitest
-      '@speirsy11/llm-bench-harness-sdk':
-        specifier: workspace:*
-        version: link:../harness-sdk
       '@types/node':
         specifier: 'catalog:'
         version: 22.18.12
-      '@vercel/blob':
-        specifier: 2.5.0
-        version: 2.5.0
       '@vitest/coverage-v8':
         specifier: 'catalog:'
         version: 3.2.6(vitest@3.2.6(@types/node@22.18.12)(jiti@2.7.0)(jsdom@26.1.0(bufferutil@4.0.8)(utf-8-validate@6.0.4))(lightningcss@1.30.2)(terser@5.44.0)(tsx@4.22.4)(yaml@2.8.1))
@@ -836,9 +840,6 @@ importers:
       vitest:
         specifier: 'catalog:'
         version: 3.2.6(@types/node@22.18.12)(jiti@2.7.0)(jsdom@26.1.0(bufferutil@4.0.8)(utf-8-validate@6.0.4))(lightningcss@1.30.2)(terser@5.44.0)(tsx@4.22.4)(yaml@2.8.1)
-      zod:
-        specifier: 'catalog:'
-        version: 4.1.12
 
   packages/runner-engine:
     dependencies:

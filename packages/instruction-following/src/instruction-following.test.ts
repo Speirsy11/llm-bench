@@ -41,6 +41,18 @@ describe("InstructionFollowingBenchmark", () => {
       "an empty bullet",
       "- \n- Preserve every raw sample\n- Report missing data explicitly",
     ],
+    [
+      "a leading blank line",
+      "\n- Pin every version\n- Preserve every raw sample\n- Report missing data explicitly",
+    ],
+    [
+      "a trailing blank line",
+      "- Pin every version\n- Preserve every raw sample\n- Report missing data explicitly\n",
+    ],
+    [
+      "leading indentation",
+      "  - Pin every version\n- Preserve every raw sample\n- Report missing data explicitly",
+    ],
   ])("scores %s as non-compliant", (_description, response) => {
     const benchmark = new InstructionFollowingBenchmark();
 

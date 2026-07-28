@@ -298,7 +298,9 @@ export class PostgresRunnerJobStore implements RunnerJobStore {
             targetCompatibilityBlockers(
               execution.target,
               candidate.job.requiredCapabilities as Capability[],
-              LLMBENCH_REPOSITORY_TOOLS,
+              execution.workload.kind === "agentic"
+                ? LLMBENCH_REPOSITORY_TOOLS
+                : execution.target.toolset.tools,
               runner.environment.harnessVersions,
               runner.inventory,
             ).length > 0

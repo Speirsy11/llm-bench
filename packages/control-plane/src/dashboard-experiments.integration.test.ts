@@ -1117,11 +1117,16 @@ describe("dashboard experiment orchestration", () => {
       provider: "native",
       model: "plugin/model",
     };
+    const secondRoute = {
+      id: "plugin-response-2",
+      provider: "native",
+      model: "plugin/model-2",
+    };
     const harness = {
       id: "example-response",
       version: "1.0.0",
       capabilities: ["response_generation"] as Capability[],
-      modelRoutes: [route],
+      modelRoutes: [route, secondRoute],
     };
     await database.db
       .update(runnerRows)
@@ -1144,7 +1149,7 @@ describe("dashboard experiment orchestration", () => {
         name: "Unsupported response plugin",
         benchmarkId: "structured-output",
         runnerId: runner.id,
-        modelRoutes: [route],
+        modelRoutes: [route, secondRoute],
         harnesses: [harness],
         toolsets: [
           { id: "native", version: "1.0.0", tools: [], mcpProfiles: [] },

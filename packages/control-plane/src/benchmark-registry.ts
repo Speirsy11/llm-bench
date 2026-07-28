@@ -217,14 +217,12 @@ export const benchmarkCatalog = [
   performanceBenchmark,
 ] as const satisfies readonly BenchmarkDefinition[];
 
-const workloadsByBenchmarkId: Readonly<
-  Record<string, RunnerExecution["workload"]>
-> = {
-  "repository-repair": repositoryRepairWorkload,
-  "structured-output": structuredOutputWorkload,
-  "instruction-following": instructionFollowingWorkload,
-  performance: performanceWorkload,
-};
+const workloadsByBenchmarkId = new Map<string, RunnerExecution["workload"]>([
+  ["repository-repair", repositoryRepairWorkload],
+  ["structured-output", structuredOutputWorkload],
+  ["instruction-following", instructionFollowingWorkload],
+  ["performance", performanceWorkload],
+]);
 
 const metricsById = new Map<string, MetricDefinition>(
   benchmarkCatalog.flatMap((benchmark) =>
@@ -255,7 +253,7 @@ export function benchmarkDefinitionForId(
 export function workloadForBenchmark(
   benchmarkId: string,
 ): RunnerExecution["workload"] | null {
-  return workloadsByBenchmarkId[benchmarkId] ?? null;
+  return workloadsByBenchmarkId.get(benchmarkId) ?? null;
 }
 
 export function limitsForBenchmark(benchmarkId: string): Limits | null {

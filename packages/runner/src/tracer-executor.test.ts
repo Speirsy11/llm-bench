@@ -378,6 +378,31 @@ describe("TracerExecutor", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it("enforces the leased response deadline on a native harness", async () => {
+    const root = await temporaryRoot();
+    const process = new StalledResponseProcessRunner();
+    const lease = responseLeaseFor("codex", {
+      limits: {
+        maxDurationMs: 5,
+        maxToolCalls: 0,
+        maxTokens: 321,
+        maxTurns: 1,
+      },
+    });
+
+    const result = await new TracerExecutor(root, {
+      processRunners: { codex: process },
+    }).execute(lease, context());
+
+    expect(result).toMatchObject({
+      status: "failed",
+      observations: [],
+      artifacts: [],
+      error: { kind: "harness_error" },
+    });
+    expect(process.requests).toHaveLength(1);
+  });
+
   it("rejects an incompatible response target before starting its process", async () => {
     const root = await temporaryRoot();
     const process = new ResponseProcessRunner("codex");
@@ -2137,6 +2162,30 @@ class ResponseProcessRunner implements ProcessRunner {
       stderr: "",
       outputBytes: 1,
       cancelled: false,
+    });
+  }
+}
+
+class StalledResponseProcessRunner implements ProcessRunner {
+  readonly requests: ProcessRunRequest[] = [];
+
+  run(request: ProcessRunRequest): Promise<ProcessRunResult> {
+    this.requests.push(request);
+    return new Promise((resolve) => {
+      const finish = () =>
+        resolve({
+          exitCode: null,
+          signal: "SIGTERM",
+          stdoutLines: [],
+          stderr: "",
+          outputBytes: 0,
+          cancelled: true,
+        });
+      if (request.signal?.aborted === true) {
+        finish();
+      } else {
+        request.signal?.addEventListener("abort", finish, { once: true });
+      }
     });
   }
 }
