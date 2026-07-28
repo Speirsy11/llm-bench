@@ -1,6 +1,6 @@
 import type { Capability, CompatibilityResult } from "./capability";
 import type { BenchmarkManifest, HarnessManifest } from "./manifest";
-import type { MetricDefinition } from "./metric";
+import type { MetricDefinition, MetricObservation } from "./metric";
 import type { AgenticTask, ResponseCase } from "./workload";
 import { evaluateCompatibility } from "./capability";
 import { selectPrimaryMetric } from "./metric";
@@ -8,7 +8,7 @@ import { selectPrimaryMetric } from "./metric";
 /**
  * Abstract benchmark contracts. A `Benchmark` carries a manifest and answers
  * compatibility questions; `ResponseBenchmark` and `AgenticBenchmark` add the
- * workload each kind contributes. Concrete benchmarks live in later epics.
+ * workload and grading behavior each kind contributes.
  */
 
 export abstract class Benchmark {
@@ -47,6 +47,9 @@ export abstract class ResponseBenchmark extends Benchmark {
   }
 
   abstract cases(): ResponseCase[];
+
+  /** Deterministically grade one raw response without invoking another model. */
+  abstract grade(caseId: string, response: string): MetricObservation[];
 }
 
 export abstract class AgenticBenchmark extends Benchmark {

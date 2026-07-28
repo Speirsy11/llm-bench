@@ -8,6 +8,8 @@ import { LLMBENCH_REPOSITORY_TOOLS } from "@llm-bench/contracts";
 import {
   repositoryRepairLimits,
   repositoryRepairWorkload,
+  responseLimits,
+  structuredOutputWorkload,
 } from "./benchmark-registry";
 import {
   createControlPlane,
@@ -1025,6 +1027,135 @@ describe("dashboard experiment orchestration", () => {
         .from(jobRows)
         .where(eq(jobRows.experimentId, launched.id)),
     ).resolves.toEqual([{ status: "failed" }]);
+  });
+
+  it("launches and labels a durable response benchmark without workspace capabilities", async () => {
+    const { actor, runner } = await pairedOnlineRunner("response-launch");
+    const route = {
+      id: "codex-response",
+      provider: "codex",
+      model: "gpt-5.4",
+    };
+    const matrix = {
+      name: "Structured response",
+      benchmarkId: "structured-output",
+      runnerId: runner.id,
+      modelRoutes: [route],
+      harnesses: [
+        {
+          id: "codex",
+          version: "1.0.0",
+          capabilities: ["response_generation"] as Capability[],
+          modelRoutes: [route],
+        },
+      ],
+      toolsets: [
+        { id: "native", version: "1.0.0", tools: [], mcpProfiles: [] },
+      ],
+    };
+
+    await expect(
+      controlPlane.dashboard.previewExperiment(actor, matrix),
+    ).resolves.toMatchObject({
+      canLaunch: true,
+      input: { benchmarkId: "structured-output" },
+      order: [{ requiredCapabilities: ["response_generation"] }],
+    });
+    const launched = await controlPlane.dashboard.launchExperiment(actor, {
+      ...matrix,
+      spendConfirmed: true,
+    });
+    const jobs = createRunnerJobService({
+      store: new PostgresRunnerJobStore(database.db),
+      randomToken: () => "response-lease-token",
+    });
+    const lease = await jobs.lease(runner);
+    expect(lease).toMatchObject({
+      benchmark: { id: "structured-output", version: "1.0.0" },
+      execution: {
+        workload: structuredOutputWorkload,
+        limits: responseLimits,
+      },
+    });
+    if (lease === null) throw new Error("Expected response lease.");
+    await jobs.complete(runner, {
+      protocolVersion: "3.0",
+      attemptId: lease.attemptId,
+      leaseToken: lease.leaseToken,
+      status: "completed",
+      observations: [
+        { metricId: "schema_compliance", value: 1 },
+        { metricId: "duration_ms", value: 250 },
+      ],
+      artifacts: [],
+      error: null,
+    });
+
+    await expect(
+      controlPlane.dashboard.getExperiment(actor, launched.id),
+    ).resolves.toMatchObject({
+      jobs: [
+        {
+          benchmark: {
+            id: "structured-output",
+            kind: "response",
+            targetKind: "response",
+          },
+          primaryMetric: {
+            id: "schema_compliance",
+            value: 1,
+          },
+        },
+      ],
+    });
+  });
+
+  it("blocks response benchmarks from local harness plugins before launch", async () => {
+    const { actor, runner } = await pairedOnlineRunner("response-plugin");
+    const route = {
+      id: "plugin-response",
+      provider: "native",
+      model: "plugin/model",
+    };
+    const harness = {
+      id: "example-response",
+      version: "1.0.0",
+      capabilities: ["response_generation"] as Capability[],
+      modelRoutes: [route],
+    };
+    await database.db
+      .update(runnerRows)
+      .set({
+        inventory: {
+          plugins: [
+            {
+              protocolVersion: "1.0.0",
+              contentHash: "a".repeat(64),
+              manifest: harness,
+            },
+          ],
+          mcpProfiles: [],
+        },
+      })
+      .where(eq(runnerRows.id, runner.id));
+
+    await expect(
+      controlPlane.dashboard.previewExperiment(actor, {
+        name: "Unsupported response plugin",
+        benchmarkId: "structured-output",
+        runnerId: runner.id,
+        modelRoutes: [route],
+        harnesses: [harness],
+        toolsets: [
+          { id: "native", version: "1.0.0", tools: [], mcpProfiles: [] },
+        ],
+      }),
+    ).resolves.toMatchObject({
+      canLaunch: false,
+      blockers: [
+        "Response execution for local harness plugins is not supported.",
+      ],
+    });
   });
 });
 

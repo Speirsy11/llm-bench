@@ -23,6 +23,7 @@ describe("defaultDashboardMatrix", () => {
   it.each([
     ["codex", "codex-gpt-5.4", "gpt-5.4"],
     ["claude", "claude-sonnet-4-6", "claude-sonnet-4-6"],
+    ["pi", "pi-gpt-5.4", "gpt-5.4"],
   ])("offers %s through native authentication", (harnessId, routeId, model) => {
     const matrix = dashboardMatrixForHarness(harnessId);
 
@@ -46,10 +47,12 @@ describe("defaultDashboardMatrix", () => {
     });
   });
 
-  it("rejects unsupported agentic harnesses", () => {
-    expect(() => dashboardMatrixForHarness("pi")).toThrow(
-      "Unsupported dashboard harness: pi.",
-    );
+  it("labels Pi as response-only through its advertised capabilities", () => {
+    expect(dashboardMatrixForHarness("pi").harnesses[0]?.capabilities).toEqual([
+      "response_generation",
+      "streaming",
+      "usage_reporting",
+    ]);
   });
 
   it("builds an external plugin matrix only from its runner advertisement", () => {

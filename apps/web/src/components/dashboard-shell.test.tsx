@@ -39,6 +39,11 @@ describe("DashboardShell", () => {
                 status: "completed",
                 retryOfJobId: null,
                 cancellationRequested: false,
+                benchmark: {
+                  id: "repository-repair",
+                  kind: "agentic",
+                  targetKind: "workspace",
+                },
                 target: {
                   position: 0,
                   modelRoute: {
@@ -173,6 +178,7 @@ describe("DashboardShell", () => {
     );
     expect(html).toContain("projected job");
     expect(html).toContain("Hidden test pass ratio");
+    expect(html).toContain("repository-repair · workspace target");
     expect(html).toMatch(
       new RegExp("Hidden test pass ratio:[\\s\\S]*>1</span>"),
     );
@@ -472,6 +478,11 @@ function jobFixture({
     status,
     retryOfJobId,
     cancellationRequested: false,
+    benchmark: {
+      id: "repository-repair",
+      kind: "agentic" as const,
+      targetKind: "workspace" as const,
+    },
     target: {
       position: 0,
       modelRoute: {

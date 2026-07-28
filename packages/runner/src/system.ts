@@ -98,9 +98,11 @@ function detectPythonVersion(): string | null {
 function detectNativeHarnessVersions(): Record<string, string> {
   const codex = detectCommandVersion("codex", /^codex-cli\s+(\S+)$/u);
   const claude = detectCommandVersion("claude", /^(\S+)\s/u);
+  const pi = detectCommandVersion("pi", /^(\S+)(?:\s|$)/u);
   return {
     ...(codex === null ? {} : { codex }),
     ...(claude === null ? {} : { claude }),
+    ...(pi === null ? {} : { pi }),
   };
 }
 

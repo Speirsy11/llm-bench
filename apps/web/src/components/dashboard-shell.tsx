@@ -6,6 +6,7 @@ import type {
   DashboardExperimentDetail,
   DashboardRunner,
 } from "@llm-bench/control-plane";
+import { benchmarkCatalog } from "@llm-bench/control-plane";
 
 import type {
   AdvertisedMcpProfile,
@@ -68,13 +69,16 @@ export function DashboardShell({
       ({ runnerId }) => runnerId === selectedRunner?.id,
     ) ?? null;
   const initialHarnessId =
-    selectedCredential && previews.llmbench
+    selectedCredential &&
+    (previews["repository-repair:llmbench"] ?? previews.llmbench)
       ? "llmbench"
-      : previews.codex
+      : (previews["repository-repair:codex"] ?? previews.codex)
         ? "codex"
-        : previews.claude
+        : (previews["repository-repair:claude"] ?? previews.claude)
           ? "claude"
-          : "llmbench";
+          : (previews["repository-repair:pi"] ?? previews.pi)
+            ? "pi"
+            : "llmbench";
 
   return (
     <main className="bg-background text-foreground min-h-screen">
@@ -208,6 +212,7 @@ export function DashboardShell({
               action={launchExperimentAction}
               advertisedMcpProfiles={advertisedMcpProfiles}
               advertisedPlugins={advertisedPlugins}
+              benchmarkCatalog={benchmarkCatalog}
               credentialProfileId={selectedCredential?.id}
               initialHarnessId={initialHarnessId}
               previews={previews}
@@ -293,6 +298,11 @@ function ExperimentCard({
                   {job.status}
                   {job.retryOfJobId ? " · retry" : ""}
                 </p>
+                {job.benchmark ? (
+                  <p className="text-muted-foreground mt-1 text-xs">
+                    {job.benchmark.id} · {job.benchmark.targetKind} target
+                  </p>
+                ) : null}
                 {job.primaryMetric ? (
                   <p className="mt-2 text-sm">
                     {job.primaryMetric.label}:{" "}

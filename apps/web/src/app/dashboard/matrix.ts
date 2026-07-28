@@ -19,7 +19,12 @@ const openRouterRouteCatalog = {
   },
 } satisfies Record<string, { id: string; provider: string; model: string }>;
 
-export const DASHBOARD_HARNESS_IDS = ["llmbench", "codex", "claude"] as const;
+export const DASHBOARD_HARNESS_IDS = [
+  "llmbench",
+  "codex",
+  "claude",
+  "pi",
+] as const;
 
 export type DashboardHarnessId = string;
 
@@ -91,6 +96,15 @@ export function dashboardMatrixForHarness(
           model: "claude-sonnet-4-6",
         },
       });
+    case "pi":
+      return nativeMatrix({
+        id: "pi",
+        route: {
+          id: "pi-gpt-5.4",
+          provider: "pi",
+          model: "gpt-5.4",
+        },
+      });
     default:
       return pluginMatrix(harnessId, inventory, selectedMcpProfileIds);
   }
@@ -149,7 +163,7 @@ function nativeMatrix({
   id,
   route,
 }: {
-  readonly id: "codex" | "claude";
+  readonly id: "codex" | "claude" | "pi";
   readonly route: ModelRoute;
 }): DashboardMatrix {
   return {
@@ -158,12 +172,19 @@ function nativeMatrix({
       {
         id,
         version: "1.0.0",
-        capabilities: [
-          "response_generation",
-          "workspaces",
-          "files",
-          "session_resume",
-        ] satisfies Capability[],
+        capabilities:
+          id === "pi"
+            ? ([
+                "response_generation",
+                "streaming",
+                "usage_reporting",
+              ] satisfies Capability[])
+            : ([
+                "response_generation",
+                "workspaces",
+                "files",
+                "session_resume",
+              ] satisfies Capability[]),
         modelRoutes: [route],
       },
     ],

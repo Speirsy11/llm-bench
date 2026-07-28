@@ -16,6 +16,10 @@ class JsonBenchmark extends ResponseBenchmark {
   override cases(): ResponseCase[] {
     return [{ id: "json-extract", prompt: "Return JSON.", repetitions: 3 }];
   }
+
+  override grade(): [] {
+    return [];
+  }
 }
 
 class RepairBenchmark extends AgenticBenchmark {

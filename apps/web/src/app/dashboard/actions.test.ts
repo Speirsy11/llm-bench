@@ -119,6 +119,7 @@ describe("dashboard credential action", () => {
 
     expect(launchExperiment).toHaveBeenCalledWith(expect.anything(), {
       name: "Codex repair",
+      benchmarkId: "repository-repair",
       runnerId: "runner-1",
       spendConfirmed: true,
       modelRoutes: [
@@ -150,7 +151,7 @@ describe("dashboard credential action", () => {
     });
   });
 
-  it("maps a Claude selection to its native model and rejects Pi", async () => {
+  it("maps Claude and Pi selections to their native models", async () => {
     const launch = new FormData();
     launch.set("name", "Claude repair");
     launch.set("runnerId", "runner-1");
@@ -161,6 +162,7 @@ describe("dashboard credential action", () => {
 
     expect(launchExperiment).toHaveBeenCalledWith(expect.anything(), {
       name: "Claude repair",
+      benchmarkId: "repository-repair",
       runnerId: "runner-1",
       spendConfirmed: true,
       modelRoutes: [
@@ -201,10 +203,24 @@ describe("dashboard credential action", () => {
 
     launchExperiment.mockClear();
     launch.set("harness", "pi");
-    await expect(launchExperimentAction(launch)).rejects.toThrow(
-      "Unsupported dashboard harness: pi.",
+    launch.set("benchmarkId", "performance");
+    await launchExperimentAction(launch);
+    expect(launchExperiment).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        benchmarkId: "performance",
+        harnesses: [
+          expect.objectContaining({
+            id: "pi",
+            capabilities: [
+              "response_generation",
+              "streaming",
+              "usage_reporting",
+            ],
+          }),
+        ],
+      }),
     );
-    expect(launchExperiment).not.toHaveBeenCalled();
   });
 
   it("rejects missing required fields", async () => {

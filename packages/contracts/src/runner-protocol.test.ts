@@ -153,6 +153,44 @@ describe("runner protocol", () => {
     ).toMatchObject({ lease: { queuePosition: 0 } });
   });
 
+  it("validates a response workload without agentic fixture metadata", () => {
+    const parsed = RunnerLeaseResponseSchema.parse({
+      protocolVersion: RUNNER_PROTOCOL_VERSION,
+      lease: {
+        jobId: "70b70847-ec1c-4aeb-ac0f-bf7db0328efe",
+        attemptId: "d0da824f-6f6a-4a01-af27-f7448d22bb39",
+        leaseToken: "lease-token",
+        benchmark: {
+          id: "structured-output",
+          version: "1.0.0",
+        },
+        execution: {
+          ...execution,
+          workload: {
+            kind: "response",
+            case: {
+              id: "customer-record",
+              prompt: "Return only JSON.",
+              repetitions: 3,
+            },
+          },
+        },
+        queuePosition: 0,
+        checkpoint: null,
+        cancellationRequested: false,
+      },
+    });
+
+    expect(parsed.lease?.execution.workload).toEqual({
+      kind: "response",
+      case: {
+        id: "customer-record",
+        prompt: "Return only JSON.",
+        repetitions: 3,
+      },
+    });
+  });
+
   it("accepts only privacy-safe runner identity during pairing", () => {
     const input = {
       protocolVersion: RUNNER_PROTOCOL_VERSION,

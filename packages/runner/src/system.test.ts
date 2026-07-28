@@ -25,7 +25,11 @@ describe("probeRunnerSystem", () => {
       platform: () => "linux",
       nodeVersion: "22.21.0",
       pythonVersion: () => "3.13.5",
-      harnessVersions: () => ({ codex: "0.142.1", claude: "2.1.198" }),
+      harnessVersions: () => ({
+        codex: "0.142.1",
+        claude: "2.1.198",
+        pi: "0.55.2",
+      }),
       architecture: () => "x64",
       cpuModels: () => ["cpu"],
       totalMemory: () => 1024,
@@ -35,6 +39,7 @@ describe("probeRunnerSystem", () => {
       llmbench: "1.0.0",
       codex: "0.142.1",
       claude: "2.1.198",
+      pi: "0.55.2",
     });
   });
 
@@ -42,21 +47,29 @@ describe("probeRunnerSystem", () => {
     const fixtureDirectory = await mkdtemp(join(tmpdir(), "llmbench-clis-"));
     const codex = join(fixtureDirectory, "codex");
     const claude = join(fixtureDirectory, "claude");
+    const pi = join(fixtureDirectory, "pi");
     const originalPath = process.env.PATH;
 
     try {
       await writeFile(codex, "#!/bin/sh\necho 'codex-cli 0.142.1'\n");
       await writeFile(claude, "#!/bin/sh\necho '2.1.198 (Claude Code)'\n");
-      await Promise.all([chmod(codex, 0o755), chmod(claude, 0o755)]);
+      await writeFile(pi, "#!/bin/sh\necho '0.55.2'\n");
+      await Promise.all([
+        chmod(codex, 0o755),
+        chmod(claude, 0o755),
+        chmod(pi, 0o755),
+      ]);
       process.env.PATH = `${fixtureDirectory}:${originalPath ?? ""}`;
 
       expect(probeRunnerSystem().environment.harnessVersions).toMatchObject({
         codex: "0.142.1",
         claude: "2.1.198",
+        pi: "0.55.2",
       });
 
       await writeFile(codex, "#!/bin/sh\nexit 1\n");
       await writeFile(claude, "#!/bin/sh\necho 'unparseable'\n");
+      await writeFile(pi, "#!/bin/sh\nexit 1\n");
       expect(probeRunnerSystem().environment.harnessVersions).toEqual({
         llmbench: "1.0.0",
       });
