@@ -430,10 +430,6 @@ export async function startMcpSession(
       },
       resolved.secrets,
     );
-    if (options.signal?.aborted) {
-      await session.stop();
-      throw new Error("MCP session was cancelled.");
-    }
     return session;
   } catch (error) {
     if (session === undefined) {

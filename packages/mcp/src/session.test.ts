@@ -17,7 +17,7 @@ import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { startMcpSession, startMcpUnixBridge } from "./index";
 
@@ -131,6 +131,8 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {
       text: "x".repeat(128 * 1024) + process.env.MCP_TOKEN,
     } }) + "\\n");
+  } else if (request.method === "tools/primitive") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: 7 }) + "\\n");
   } else {
     process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, error: {
       code: -32000, message: "failed " + process.env.MCP_TOKEN,
@@ -149,6 +151,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     const large = await session.request("tools/large");
     expect(JSON.stringify(large)).not.toContain(canary);
     expect(JSON.stringify(large).length).toBeGreaterThan(128 * 1024);
+    await expect(session.request("tools/primitive")).resolves.toBe(7);
     await expect(session.request("tools/error")).rejects.toThrow(
       "failed [REDACTED]",
     );
@@ -212,9 +215,15 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         SHORT_SECRET: "runner:short",
         LONG_SECRET: "runner:long",
         DUPLICATE_SECRET: "runner:duplicate",
+        EQUAL_A: "runner:equal-a",
+        EQUAL_B: "runner:equal-b",
       }),
-      (reference) =>
-        Promise.resolve(reference === "runner:short" ? "token" : "token-long"),
+      (reference) => {
+        if (reference === "runner:short") return Promise.resolve("token");
+        if (reference === "runner:equal-a") return Promise.resolve("alpha");
+        if (reference === "runner:equal-b") return Promise.resolve("bravo");
+        return Promise.resolve("token-long");
+      },
     );
     await expect(session.probe()).resolves.toMatchObject({
       capabilities: { value: "[REDACTED]" },
@@ -326,6 +335,29 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     resolveSecret("secret");
     controller.abort();
     await expect(launch).rejects.toThrow("cancelled");
+    await expect(access(marker)).rejects.toThrow();
+  });
+
+  it("does not launch when cancellation is observed after artifact reverification", async () => {
+    const root = await mkdtemp(join(tmpdir(), "llm-bench-mcp-session-"));
+    roots.push(root);
+    const fixture = join(root, "cancel-after-reverify.mjs");
+    const marker = join(root, "launched");
+    await writeFile(
+      fixture,
+      `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(marker)}, "launched");`,
+    );
+    const controller = new AbortController();
+    let checks = 0;
+    vi.spyOn(controller.signal, "aborted", "get").mockImplementation(
+      () => ++checks === 3,
+    );
+
+    await expect(
+      startMcpSession(profileFor(fixture), () => Promise.resolve(undefined), {
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("cancelled");
     await expect(access(marker)).rejects.toThrow();
   });
 
@@ -826,6 +858,22 @@ createInterface({ input: process.stdin }).on("line", () => process.stdout.write(
     await expect(session.probe()).rejects.toThrow("output exceeded 32 bytes");
     await expect(session.stop()).resolves.toBeUndefined();
 
+    const completeLineFixture = join(root, "complete-line-bound.mjs");
+    await writeFile(
+      completeLineFixture,
+      `import { createInterface } from "node:readline";
+createInterface({ input: process.stdin }).on("line", () => process.stdout.write("x".repeat(64) + "\\n"));`,
+    );
+    const completeLineSession = await startMcpSession(
+      profileFor(completeLineFixture),
+      () => Promise.resolve(undefined),
+      { maxOutputBytes: 32 },
+    );
+    await expect(completeLineSession.probe()).rejects.toThrow(
+      "output exceeded 32 bytes",
+    );
+    await expect(completeLineSession.stop()).resolves.toBeUndefined();
+
     const stderrFixture = join(root, "stderr-bound.mjs");
     await writeFile(
       stderrFixture,
@@ -1036,6 +1084,19 @@ createInterface({ input: process.stdin }).on("line", () => process.stdout.write(
         () => Promise.resolve(undefined),
       ),
     ).rejects.toThrow("unverifiable execution artifacts");
+
+    await expect(
+      startMcpSession(
+        {
+          ...profileFor(fixture),
+          local: {
+            ...profileFor(fixture).local,
+            cwd: join(root, "does-not-exist"),
+          },
+        },
+        () => Promise.resolve(undefined),
+      ),
+    ).rejects.toThrow("MCP server could not start");
   });
 });
 
