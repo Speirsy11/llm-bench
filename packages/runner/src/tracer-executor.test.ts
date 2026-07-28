@@ -297,6 +297,7 @@ describe("TracerExecutor", () => {
     const result = await new TracerExecutor(root, {
       identity,
       openRouterFetch: fetch,
+      deadline: new AbortController().signal,
       now: () => {
         time += 100;
         return time;
@@ -308,7 +309,73 @@ describe("TracerExecutor", () => {
       metricId: "schema_compliance",
       value: 1,
     });
+    const providerDuration = result.observations.find(
+      (observation) => observation.metricId === "provider_duration_ms",
+    )?.value;
+    expect(typeof providerDuration).toBe("number");
+    expect(providerDuration).not.toBeNull();
     expect(fetch).toHaveBeenCalledTimes(3);
+    const artifact = result.artifacts[0];
+    if (artifact === undefined) {
+      throw new Error("Expected a response evidence artifact.");
+    }
+    const evidence: unknown = JSON.parse(
+      await readFile(join(root, "artifacts", artifact.contentHash), "utf8"),
+    );
+    expect(evidence).toMatchObject({
+      invocations: [
+        {
+          metadata: {
+            model: null,
+            sampleIndex: 0,
+          },
+        },
+        { metadata: { sampleIndex: 1 } },
+        { metadata: { sampleIndex: 2 } },
+      ],
+    });
+  });
+
+  it("enforces the leased duration limit on an LLMBench provider request", async () => {
+    const root = await temporaryRoot();
+    const { identity, credential } = await llmCredential();
+    const fetch = vi.fn((_url: string, init: RequestInit) => {
+      const signal = init.signal;
+      if (signal === undefined || signal === null) {
+        return Promise.reject(new Error("Expected a request signal."));
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        const abort = () =>
+          reject(new Error("Request aborted.", { cause: signal.reason }));
+        if (signal.aborted) {
+          abort();
+        } else {
+          signal.addEventListener("abort", abort, { once: true });
+        }
+      });
+    });
+    const lease = responseLeaseFor("llmbench", {
+      credential,
+      limits: {
+        maxDurationMs: 5,
+        maxToolCalls: 0,
+        maxTokens: 321,
+        maxTurns: 1,
+      },
+    });
+
+    const result = await new TracerExecutor(root, {
+      identity,
+      openRouterFetch: fetch,
+    }).execute(lease, context());
+
+    expect(result).toMatchObject({
+      status: "failed",
+      observations: [],
+      artifacts: [],
+      error: { kind: "harness_error" },
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("rejects an incompatible response target before starting its process", async () => {

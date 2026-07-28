@@ -10,7 +10,14 @@ const PERFORMANCE_CASE_ID = "sentinel-response";
 export const performanceMetricDefinitions = [
   {
     id: "duration_ms",
-    label: "Duration",
+    label: "Harness duration",
+    kind: "duration",
+    unit: "ms",
+    direction: "lower_is_better",
+  },
+  {
+    id: "provider_duration_ms",
+    label: "Provider request duration",
     kind: "duration",
     unit: "ms",
     direction: "lower_is_better",
@@ -99,6 +106,7 @@ export class PerformanceBenchmark extends ResponseBenchmark {
 export type SamplePhase = "warmup" | "measured";
 
 export type OptionalPerformanceMetric =
+  | "providerDurationMs"
   | "ttftMs"
   | "inputTokens"
   | "outputTokens"
@@ -111,6 +119,7 @@ export interface PerformanceSampleContext {
 
 export interface PerformanceSampleInput {
   durationMs: number;
+  providerDurationMs?: number | null;
   ttftMs?: number | null;
   inputTokens?: number | null;
   outputTokens?: number | null;
@@ -122,6 +131,7 @@ export interface PerformanceSample {
   phase: SamplePhase;
   index: number;
   durationMs: number;
+  providerDurationMs: number | null;
   ttftMs: number | null;
   inputTokens: number | null;
   outputTokens: number | null;
@@ -151,6 +161,7 @@ export interface PerformanceReport {
   samples: PerformanceSample[];
   aggregates: {
     durationMs: NumericAggregate;
+    providerDurationMs: NumericAggregate;
     ttftMs: NumericAggregate;
     inputTokens: NumericAggregate;
     outputTokens: NumericAggregate;
@@ -177,6 +188,8 @@ export async function collectPerformanceSamples(
 ): Promise<PerformanceReport> {
   const warmupSamples = options.warmupSamples ?? 1;
   const measuredSamples = options.measuredSamples ?? 5;
+  validateSampleCount("warmupSamples", warmupSamples, true);
+  validateSampleCount("measuredSamples", measuredSamples, false);
   const samples: PerformanceSample[] = [];
 
   for (let index = 0; index < warmupSamples; index += 1) {
@@ -202,6 +215,7 @@ export async function collectPerformanceSamples(
     samples,
     aggregates: {
       durationMs: aggregate(measured, "durationMs"),
+      providerDurationMs: aggregate(measured, "providerDurationMs"),
       ttftMs: aggregate(measured, "ttftMs"),
       inputTokens: aggregate(measured, "inputTokens"),
       outputTokens: aggregate(measured, "outputTokens"),
@@ -219,6 +233,11 @@ function normalizeSample(
   input: PerformanceSampleInput,
 ): PerformanceSample {
   const missingReasons: PerformanceSample["missingReasons"] = {};
+  const providerDurationMs = optionalValue(
+    input,
+    "providerDurationMs",
+    missingReasons,
+  );
   const ttftMs = optionalValue(input, "ttftMs", missingReasons);
   const inputTokens = optionalValue(input, "inputTokens", missingReasons);
   const outputTokens = optionalValue(input, "outputTokens", missingReasons);
@@ -240,6 +259,7 @@ function normalizeSample(
   return {
     ...context,
     durationMs: input.durationMs,
+    providerDurationMs,
     ttftMs,
     inputTokens,
     outputTokens,
@@ -247,6 +267,19 @@ function normalizeSample(
     throughputTokensPerSecond,
     missingReasons,
   };
+}
+
+function validateSampleCount(
+  name: "warmupSamples" | "measuredSamples",
+  value: number,
+  allowZero: boolean,
+): void {
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value < 0) {
+    throw new Error(`Invalid ${name}: expected a non-negative integer.`);
+  }
+  if (!allowZero && value === 0) {
+    throw new Error(`Invalid ${name}: expected a positive integer.`);
+  }
 }
 
 function optionalValue(

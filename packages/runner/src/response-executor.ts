@@ -15,6 +15,11 @@ export interface ResponseExecutionEvidence extends PerformanceReport {
     sampleIndex: number;
     observations: MetricObservation[];
   }[];
+  invocations: {
+    phase: PerformanceSampleContext["phase"];
+    index: number;
+    metadata: Record<string, unknown>;
+  }[];
 }
 
 export interface ExecuteResponseBenchmarkOptions {
@@ -31,6 +36,7 @@ export interface ResponseExecutionResult {
 
 const aggregateMetricIds = {
   durationMs: "duration_ms",
+  providerDurationMs: "provider_duration_ms",
   ttftMs: "ttft_ms",
   inputTokens: "input_tokens",
   outputTokens: "output_tokens",
@@ -44,6 +50,7 @@ export async function executeResponseBenchmark(
 ): Promise<ResponseExecutionResult> {
   const now = options.now ?? Date.now;
   const grades: ResponseExecutionEvidence["grades"] = [];
+  const invocations: ResponseExecutionEvidence["invocations"] = [];
   const evidence = await collectPerformanceSamples({
     warmupSamples: options.benchmark.id === "performance" ? 1 : 0,
     measuredSamples: options.responseCase.repetitions,
@@ -57,6 +64,10 @@ export async function executeResponseBenchmark(
             `Response harness stopped with status ${result.status}.`,
         );
       }
+      invocations.push({
+        ...context,
+        metadata: structuredClone(result.metadata),
+      });
       if (context.phase === "measured") {
         grades.push({
           sampleIndex: context.index,
@@ -68,11 +79,13 @@ export async function executeResponseBenchmark(
       }
       return {
         durationMs,
+        providerDurationMs: observationValue(result, "provider_duration_ms"),
         ttftMs: observationValue(result, "ttft_ms"),
         inputTokens: observationValue(result, "input_tokens"),
         outputTokens: observationValue(result, "output_tokens"),
         costUsd: observationValue(result, "cost_usd"),
         missingReasons: {
+          providerDurationMs: "harness_did_not_report_provider_duration",
           ttftMs: "harness_did_not_report_ttft",
           inputTokens: "harness_did_not_report_input_tokens",
           outputTokens: "harness_did_not_report_output_tokens",
@@ -93,7 +106,7 @@ export async function executeResponseBenchmark(
           ].mean,
       })),
     ],
-    evidence: { ...evidence, grades },
+    evidence: { ...evidence, grades, invocations },
   };
 }
 

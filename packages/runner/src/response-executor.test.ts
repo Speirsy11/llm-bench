@@ -15,6 +15,8 @@ function completed(
   output: string,
   inputTokens: number,
   outputTokens: number,
+  metadata: Record<string, unknown> = {},
+  providerDurationMs?: number,
 ): AdapterRunResult {
   return {
     status: "completed",
@@ -22,10 +24,13 @@ function completed(
     observations: [
       { metricId: "input_tokens", value: inputTokens },
       { metricId: "output_tokens", value: outputTokens },
+      ...(providerDurationMs === undefined
+        ? []
+        : [{ metricId: "provider_duration_ms", value: providerDurationMs }]),
     ],
     checkpoint: null,
     events: [],
-    metadata: {},
+    metadata,
   };
 }
 
@@ -36,11 +41,25 @@ describe("executeResponseBenchmark", () => {
     const run = vi
       .fn()
       .mockResolvedValueOnce(
-        completed('{"name":"Ada Lovelace","age":36,"active":true}', 10, 5),
+        completed(
+          '{"name":"Ada Lovelace","age":36,"active":true}',
+          10,
+          5,
+          { model: "model-a", requestId: "request-1" },
+          80,
+        ),
       )
-      .mockResolvedValueOnce(completed("not json", 20, 10))
       .mockResolvedValueOnce(
-        completed('{"name":"Ada Lovelace","age":36,"active":true}', 30, 15),
+        completed("not json", 20, 10, { model: "model-a" }, 150),
+      )
+      .mockResolvedValueOnce(
+        completed(
+          '{"name":"Ada Lovelace","age":36,"active":true}',
+          30,
+          15,
+          { model: "model-a" },
+          250,
+        ),
       );
     const times = [0, 100, 100, 300, 300, 600];
 
@@ -60,6 +79,7 @@ describe("executeResponseBenchmark", () => {
       expect.arrayContaining([
         { metricId: "schema_compliance", value: 2 / 3 },
         { metricId: "duration_ms", value: 200 },
+        { metricId: "provider_duration_ms", value: 160 },
         { metricId: "input_tokens", value: 20 },
         { metricId: "output_tokens", value: 10 },
         { metricId: "ttft_ms", value: null },
@@ -67,6 +87,23 @@ describe("executeResponseBenchmark", () => {
       ]),
     );
     expect(result.evidence.samples).toHaveLength(3);
+    expect(result.evidence.invocations).toEqual([
+      {
+        phase: "measured",
+        index: 0,
+        metadata: { model: "model-a", requestId: "request-1" },
+      },
+      {
+        phase: "measured",
+        index: 1,
+        metadata: { model: "model-a" },
+      },
+      {
+        phase: "measured",
+        index: 2,
+        metadata: { model: "model-a" },
+      },
+    ]);
     expect(result.evidence.grades).toEqual([
       {
         sampleIndex: 0,
@@ -107,6 +144,11 @@ describe("executeResponseBenchmark", () => {
       measured: 5,
     });
     expect(result.evidence.samples[0]?.phase).toBe("warmup");
+    expect(result.evidence.invocations).toHaveLength(6);
+    expect(result.evidence.invocations[0]).toMatchObject({
+      phase: "warmup",
+      index: 0,
+    });
     expect(result.observations).toContainEqual({
       metricId: "exact_response",
       value: 1,

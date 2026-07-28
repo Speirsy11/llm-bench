@@ -97,6 +97,12 @@ describe("benchmark registry", () => {
       unit: "ms",
       direction: "lower_is_better",
     });
+    expect(metricDefinitionForId("provider_duration_ms")).toEqual({
+      id: "provider_duration_ms",
+      kind: "duration",
+      unit: "ms",
+      direction: "lower_is_better",
+    });
     expect(metricDefinitionForId("throughput_tokens_per_second")).toEqual({
       id: "throughput_tokens_per_second",
       kind: "rate",

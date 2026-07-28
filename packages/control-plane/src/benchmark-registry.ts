@@ -78,7 +78,14 @@ export const instructionFollowingBenchmark = responseBenchmark({
 const performanceMetrics = [
   {
     id: "duration_ms",
-    label: "Duration",
+    label: "Harness duration",
+    kind: "duration",
+    unit: "ms",
+    direction: "lower_is_better",
+  },
+  {
+    id: "provider_duration_ms",
+    label: "Provider request duration",
     kind: "duration",
     unit: "ms",
     direction: "lower_is_better",

@@ -6,8 +6,8 @@ containing no more than eight words.
 
 `InstructionFollowingBenchmark` requires `response_generation`, runs three
 repetitions by default, and reports `instruction_compliance` as a binary ratio.
-The grader checks the raw response locally and rejects extra lines, malformed
-bullets, overlong bullets, and carriage-return line endings.
+The grader checks the raw response locally, accepts LF or CRLF line endings,
+and rejects extra lines, malformed bullets, and overlong bullets.
 
 ```ts
 import { InstructionFollowingBenchmark } from "@llm-bench/instruction-following";

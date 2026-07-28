@@ -43,6 +43,7 @@ describe("collectPerformanceSamples", () => {
     const observations = [
       {
         durationMs: 10_000,
+        providerDurationMs: 8_000,
         ttftMs: 9_000,
         inputTokens: 1_000,
         outputTokens: 1_000,
@@ -50,6 +51,7 @@ describe("collectPerformanceSamples", () => {
       },
       {
         durationMs: 100,
+        providerDurationMs: 80,
         ttftMs: 10,
         inputTokens: 5,
         outputTokens: 10,
@@ -57,6 +59,7 @@ describe("collectPerformanceSamples", () => {
       },
       {
         durationMs: 200,
+        providerDurationMs: 160,
         ttftMs: 20,
         inputTokens: 10,
         outputTokens: 20,
@@ -64,17 +67,20 @@ describe("collectPerformanceSamples", () => {
       },
       {
         durationMs: 300,
+        providerDurationMs: null,
         ttftMs: null,
         inputTokens: 15,
         outputTokens: 30,
         costUsd: null,
         missingReasons: {
+          providerDurationMs: "harness_did_not_report_provider_duration",
           ttftMs: "provider_did_not_report_ttft",
           costUsd: "route_has_no_price",
         },
       },
       {
         durationMs: 400,
+        providerDurationMs: 320,
         ttftMs: 40,
         inputTokens: 20,
         outputTokens: null,
@@ -85,6 +91,7 @@ describe("collectPerformanceSamples", () => {
       },
       {
         durationMs: 500,
+        providerDurationMs: 400,
         ttftMs: 50,
         inputTokens: 25,
         outputTokens: 50,
@@ -126,6 +133,16 @@ describe("collectPerformanceSamples", () => {
       variance: 20_000,
       missingReasons: [],
     });
+    expect(report.aggregates.providerDurationMs).toEqual({
+      availableSampleCount: 4,
+      missingSampleCount: 1,
+      sum: 960,
+      mean: 240,
+      p50: 240,
+      p95: 388,
+      variance: 16_000,
+      missingReasons: ["harness_did_not_report_provider_duration"],
+    });
     expect(report.aggregates.ttftMs).toEqual({
       availableSampleCount: 4,
       missingSampleCount: 1,
@@ -164,12 +181,14 @@ describe("collectPerformanceSamples", () => {
         phase: "measured",
         index: 0,
         durationMs: 250,
+        providerDurationMs: null,
         ttftMs: null,
         inputTokens: null,
         outputTokens: null,
         costUsd: null,
         throughputTokensPerSecond: null,
         missingReasons: {
+          providerDurationMs: "not_reported",
           ttftMs: "not_reported",
           inputTokens: "not_reported",
           outputTokens: "not_reported",
@@ -188,6 +207,9 @@ describe("collectPerformanceSamples", () => {
       variance: null,
       missingReasons: ["not_reported"],
     });
+    expect(report.aggregates.providerDurationMs.missingReasons).toEqual([
+      "not_reported",
+    ]);
   });
 
   it("does not invent infinite throughput for a non-positive duration", async () => {
@@ -213,5 +235,25 @@ describe("collectPerformanceSamples", () => {
       mean: null,
       missingReasons: ["non_positive_duration"],
     });
+  });
+
+  it.each([
+    ["warmupSamples", -1],
+    ["warmupSamples", 0.5],
+    ["warmupSamples", Number.NaN],
+    ["measuredSamples", 0],
+    ["measuredSamples", -1],
+    ["measuredSamples", 1.5],
+    ["measuredSamples", Number.NaN],
+  ] as const)("rejects an invalid %s value of %s", async (key, value) => {
+    const sample = vi.fn(() => Promise.resolve({ durationMs: 1 }));
+
+    await expect(
+      collectPerformanceSamples({
+        sample,
+        [key]: value,
+      }),
+    ).rejects.toThrow(`Invalid ${key}`);
+    expect(sample).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { chmod, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { performance } from "node:perf_hooks";
 import { isDeepStrictEqual } from "node:util";
 import type { PluginMcpConnection } from "@speirsy11/llm-bench-harness-sdk";
 
@@ -289,6 +290,7 @@ export class TracerExecutor implements RunnerExecutor {
     const harnessId = lease.execution.target.harness.id;
     if (harnessId === "llmbench") {
       const { provider } = await this.openRouterProvider(lease);
+      const providerStartedAt = performance.now();
       const completion = await provider.complete(
         {
           model: lease.execution.target.modelRoute.model,
@@ -300,12 +302,20 @@ export class TracerExecutor implements RunnerExecutor {
           ],
           maxTokens: lease.execution.limits.maxTokens,
         },
-        { signal: context.signal },
+        {
+          signal: responseRequestSignal(
+            lease,
+            context.signal,
+            this.options.deadline,
+          ),
+        },
       );
+      const providerDurationMs = performance.now() - providerStartedAt;
       return {
         status: "completed",
         output: completion.content,
         observations: [
+          { metricId: "provider_duration_ms", value: providerDurationMs },
           { metricId: "input_tokens", value: completion.usage.promptTokens },
           {
             metricId: "output_tokens",
@@ -796,6 +806,18 @@ function processFixtureHarness(
       return { trajectory: [result.output] };
     },
   };
+}
+
+function responseRequestSignal(
+  lease: ResponseLease,
+  executionSignal: AbortSignal,
+  deadline: AbortSignal | undefined,
+): AbortSignal {
+  return AbortSignal.any([
+    executionSignal,
+    ...(deadline === undefined ? [] : [deadline]),
+    AbortSignal.timeout(lease.execution.limits.maxDurationMs),
+  ]);
 }
 
 function adapterRequest(
