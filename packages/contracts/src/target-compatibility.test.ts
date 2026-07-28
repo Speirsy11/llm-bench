@@ -62,6 +62,10 @@ describe("targetCompatibilityBlockers", () => {
     ).toEqual([
       "Runner advertises an incompatible claude CLI version: unknown.",
     ]);
+    expect(
+      targetCompatibilityBlockers(target("pi"), required, tools, {}),
+    ).toEqual(["Runner does not advertise an installed pi CLI."]);
+    expect(nativeHarnessCliBlocker("pi", { pi: "0.55.2" })).toBeNull();
   });
 
   it("rejects an unknown harness before durable execution", () => {

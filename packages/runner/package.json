@@ -19,32 +19,37 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
-  "devDependencies": {
+  "dependencies": {
     "@llm-bench/claude-harness": "workspace:*",
     "@llm-bench/codex-harness": "workspace:*",
     "@llm-bench/contracts": "workspace:*",
     "@llm-bench/crypto": "workspace:*",
-    "@llm-bench/eslint-config": "workspace:*",
+    "@llm-bench/instruction-following": "workspace:*",
     "@llm-bench/llm-bench-harness": "workspace:*",
     "@llm-bench/mcp": "workspace:*",
     "@llm-bench/openai-compatible": "workspace:*",
+    "@llm-bench/performance": "workspace:*",
     "@llm-bench/pi-harness": "workspace:*",
-    "@llm-bench/prettier-config": "workspace:*",
     "@llm-bench/process-harness": "workspace:*",
     "@llm-bench/repository-repair": "workspace:*",
     "@llm-bench/runner-engine": "workspace:*",
+    "@llm-bench/structured-output": "workspace:*",
+    "@speirsy11/llm-bench-harness-sdk": "workspace:*",
+    "@vercel/blob": "2.5.0",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@llm-bench/eslint-config": "workspace:*",
+    "@llm-bench/prettier-config": "workspace:*",
     "@llm-bench/tsconfig": "workspace:*",
     "@llm-bench/vitest-config": "workspace:*",
-    "@speirsy11/llm-bench-harness-sdk": "workspace:*",
     "@types/node": "catalog:",
-    "@vercel/blob": "2.5.0",
     "@vitest/coverage-v8": "catalog:",
     "esbuild": "0.25.11",
     "eslint": "catalog:",
     "prettier": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:",
-    "zod": "catalog:"
+    "vitest": "catalog:"
   },
   "prettier": "@llm-bench/prettier-config"
 }

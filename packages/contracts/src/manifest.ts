@@ -18,8 +18,8 @@ export const ArtifactVersionSchema = z
  * capabilities and the metrics it reports; a harness advertises the
  * capabilities it supports and the model routes it can drive.
  *
- * Performance benchmarks are deferred to a later epic, so the v1 contract
- * recognises only the `response` and `agentic` kinds.
+ * Performance measurements remain a response benchmark rather than creating a
+ * display-only third kind, so the contract recognises `response` and `agentic`.
  */
 
 export const benchmarkKinds = ["response", "agentic"] as const;

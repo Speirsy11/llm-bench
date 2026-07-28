@@ -1,14 +1,17 @@
 import { createHash } from "node:crypto";
 import { chmod, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { performance } from "node:perf_hooks";
 import { isDeepStrictEqual } from "node:util";
 import type { PluginMcpConnection } from "@speirsy11/llm-bench-harness-sdk";
 
 import type {
   AdapterRunRequest,
+  AdapterRunResult,
   BenchmarkEvent,
   Checkpoint,
   PluginExecutionRef,
+  ResponseBenchmark,
   RunnerCheckpoint,
   RunnerInventory,
   RunnerLease,
@@ -34,6 +37,7 @@ import {
   REPOSITORY_REPAIR_REQUIRED_CAPABILITIES,
   targetCompatibilityBlockers,
 } from "@llm-bench/contracts";
+import { InstructionFollowingBenchmark } from "@llm-bench/instruction-following";
 import {
   createRepositoryTools,
   CredentialResolver,
@@ -41,6 +45,7 @@ import {
 } from "@llm-bench/llm-bench-harness";
 import { startMcpSession, startMcpUnixBridge } from "@llm-bench/mcp";
 import { OpenRouterProvider } from "@llm-bench/openai-compatible";
+import { PerformanceBenchmark } from "@llm-bench/performance";
 import { PiHarness } from "@llm-bench/pi-harness";
 import { repairFixture, repairScenario } from "@llm-bench/repository-repair";
 import {
@@ -48,10 +53,12 @@ import {
   FileArtifactStore,
   JsonlEventSpool,
 } from "@llm-bench/runner-engine";
+import { StructuredOutputBenchmark } from "@llm-bench/structured-output";
 
 import type { PluginRegistry } from "./plugin-registry";
 import type { RunnerExecutor } from "./worker";
 import { ExecutablePluginHarness } from "./plugin-host";
+import { executeResponseBenchmark } from "./response-executor";
 
 type ProcessTarget = "codex" | "claude" | "pi";
 const openRouterCredential = /^sk-or-v1-[A-Za-z0-9_-]{16,}$/u;
@@ -79,6 +86,7 @@ export interface TracerExecutorOptions {
   ) => Promise<McpUnixBridge>;
   removeMcpBridgeRoot?: (path: string) => Promise<void>;
   deadline?: AbortSignal;
+  now?: () => number;
 }
 
 interface McpSessionHandle extends McpRequestSession {
@@ -93,6 +101,25 @@ interface McpAwareFixtureHarness extends FixtureHarness {
   ): ReturnType<FixtureHarness["repair"]>;
 }
 
+type AgenticWorkload = Extract<
+  RunnerLease["execution"]["workload"],
+  { kind: "agentic" }
+>;
+type AgenticLease = Omit<RunnerLease, "execution"> & {
+  execution: Omit<RunnerLease["execution"], "workload"> & {
+    workload: AgenticWorkload;
+  };
+};
+type ResponseWorkload = Extract<
+  RunnerLease["execution"]["workload"],
+  { kind: "response" }
+>;
+type ResponseLease = Omit<RunnerLease, "execution"> & {
+  execution: Omit<RunnerLease["execution"], "workload"> & {
+    workload: ResponseWorkload;
+  };
+};
+
 /** Executes versioned repository-repair leases through their selected target. */
 export class TracerExecutor implements RunnerExecutor {
   constructor(
@@ -101,6 +128,9 @@ export class TracerExecutor implements RunnerExecutor {
   ) {}
 
   canResume(lease: RunnerLease, checkpoint: RunnerCheckpoint): boolean {
+    if (lease.execution.workload.kind === "response") {
+      return false;
+    }
     const nativeCheckpoint = checkpointFor(lease, checkpoint);
     switch (lease.execution.target.harness.id) {
       case "codex":
@@ -122,10 +152,14 @@ export class TracerExecutor implements RunnerExecutor {
     lease: RunnerLease,
     context: Parameters<RunnerExecutor["execute"]>[1],
   ): ReturnType<RunnerExecutor["execute"]> {
-    const scenario = validateLocalWorkload(lease);
-    const harnessId = validateTarget(lease, this.options.inventory);
-    const baseHarness = await this.harnessFor(lease, context, harnessId);
-    const harness = this.withMcpProfiles(lease, baseHarness);
+    if (isResponseLease(lease)) {
+      return this.executeResponse(lease, context);
+    }
+    const agenticLease = lease as AgenticLease;
+    const scenario = validateLocalWorkload(agenticLease);
+    const harnessId = validateTarget(agenticLease, this.options.inventory);
+    const baseHarness = await this.harnessFor(agenticLease, context, harnessId);
+    const harness = this.withMcpProfiles(agenticLease, baseHarness);
     const workspaceRoot = join(this.root, "workspaces");
     const artifactRoot = join(this.root, "artifacts");
     const spoolRoot = join(this.root, "spools");
@@ -141,14 +175,14 @@ export class TracerExecutor implements RunnerExecutor {
     );
     const artifactStore = new FileArtifactStore(artifactRoot);
     const eventSpool = new StreamingEventSpool(
-      join(spoolRoot, `${lease.attemptId}.jsonl`),
+      join(spoolRoot, `${agenticLease.attemptId}.jsonl`),
       (event) => context.emit(event),
     );
     const result = await executeAgenticTask({
-      jobId: lease.jobId,
+      jobId: agenticLease.jobId,
       scenario,
       harness,
-      limits: lease.execution.limits,
+      limits: agenticLease.execution.limits,
       artifactStore,
       eventSpool,
       workspaceRoot,
@@ -161,7 +195,7 @@ export class TracerExecutor implements RunnerExecutor {
       artifacts: [
         {
           kind: "diff",
-          blobPath: `attempts/${lease.attemptId}/${result.diffArtifact.id}.patch`,
+          blobPath: `attempts/${agenticLease.attemptId}/${result.diffArtifact.id}.patch`,
           contentHash: result.diffArtifact.contentHash,
           byteLength: result.diffArtifact.byteSize,
         },
@@ -173,8 +207,156 @@ export class TracerExecutor implements RunnerExecutor {
     };
   }
 
+  private async executeResponse(
+    lease: ResponseLease,
+    context: Parameters<RunnerExecutor["execute"]>[1],
+  ): ReturnType<RunnerExecutor["execute"]> {
+    const { benchmark, responseCase } = validateResponseWorkload(lease);
+    validateResponseTarget(lease, benchmark, this.options.inventory);
+    if (lease.execution.target.plugin !== undefined) {
+      throw new Error(
+        "Response execution for local harness plugins is not supported.",
+      );
+    }
+    if (lease.execution.target.toolset.mcpProfiles.length > 0) {
+      throw new Error(
+        "Response execution does not support runner-managed MCP profiles.",
+      );
+    }
+
+    const artifactRoot = join(this.root, "artifacts");
+    await mkdir(artifactRoot, { recursive: true, mode: 0o700 });
+    await chmod(artifactRoot, 0o700);
+    const artifactStore = new FileArtifactStore(artifactRoot);
+    const now = this.options.now ?? Date.now;
+    await context.emit({
+      type: "job_started",
+      at: new Date(now()).toISOString(),
+      jobId: lease.jobId,
+    });
+
+    try {
+      const signal = responseRequestSignal(
+        lease,
+        context.signal,
+        this.options.deadline,
+      );
+      const run =
+        lease.execution.target.harness.id === "llmbench"
+          ? await this.llmBenchResponseRunner(lease, signal)
+          : (sample: { index: number }) =>
+              this.runNativeResponseSample(lease, signal, sample.index);
+      const result = await executeResponseBenchmark({
+        benchmark,
+        responseCase,
+        now,
+        run,
+      });
+      const evidence = await artifactStore.put({
+        jobId: lease.jobId,
+        mediaType: "application/vnd.llmbench.response-evidence+json",
+        bytes: Buffer.from(JSON.stringify(result.evidence), "utf8"),
+      });
+      await context.emit({
+        type: "case_completed",
+        at: new Date(now()).toISOString(),
+        caseId: responseCase.id,
+        observations: result.observations,
+      });
+      return {
+        status: "completed",
+        observations: result.observations,
+        artifacts: [
+          {
+            kind: "response_evidence",
+            blobPath: `attempts/${lease.attemptId}/${evidence.id}.json`,
+            contentHash: evidence.contentHash,
+            byteLength: evidence.byteSize,
+          },
+        ],
+        error: null,
+      };
+    } catch (error) {
+      const message = describeCleanupError(error);
+      await context.emit({
+        type: "job_failed",
+        at: new Date(now()).toISOString(),
+        failure: { kind: "harness_error", message },
+      });
+      return {
+        status: context.signal.aborted ? "cancelled" : "failed",
+        observations: [],
+        artifacts: [],
+        error: { kind: "harness_error", message },
+      };
+    }
+  }
+
+  private async llmBenchResponseRunner(
+    lease: ResponseLease,
+    signal: AbortSignal,
+  ): Promise<(sample: { index: number }) => Promise<AdapterRunResult>> {
+    const { provider } = await this.openRouterProvider(lease);
+    return async ({ index: sampleIndex }) => {
+      const providerStartedAt = performance.now();
+      const completion = await provider.complete(
+        {
+          model: lease.execution.target.modelRoute.model,
+          messages: [
+            {
+              role: "user",
+              content: lease.execution.workload.case.prompt,
+            },
+          ],
+          maxTokens: lease.execution.limits.maxTokens,
+        },
+        { signal },
+      );
+      const providerDurationMs = performance.now() - providerStartedAt;
+      return {
+        status: "completed",
+        output: completion.content,
+        observations: [
+          { metricId: "provider_duration_ms", value: providerDurationMs },
+          { metricId: "input_tokens", value: completion.usage.promptTokens },
+          {
+            metricId: "output_tokens",
+            value: completion.usage.completionTokens,
+          },
+        ],
+        checkpoint: null,
+        events: [],
+        metadata: { model: completion.model, sampleIndex },
+      };
+    };
+  }
+
+  private runNativeResponseSample(
+    lease: ResponseLease,
+    signal: AbortSignal,
+    _sampleIndex: number,
+  ): Promise<AdapterRunResult> {
+    const harnessId = lease.execution.target.harness.id;
+    const adapter =
+      harnessId === "codex"
+        ? new CodexHarness({
+            manifest: lease.execution.target.harness,
+            runner: this.options.processRunners?.codex,
+          })
+        : harnessId === "claude"
+          ? new ClaudeHarness({
+              manifest: lease.execution.target.harness,
+              runner: this.options.processRunners?.claude,
+            })
+          : new PiHarness({
+              manifest: lease.execution.target.harness,
+              runner: this.options.processRunners?.pi,
+            });
+    return adapter.run(responseAdapterRequest(lease, signal, this.root));
+  }
+
   private async harnessFor(
-    lease: RunnerLease,
+    lease: AgenticLease,
     context: Parameters<RunnerExecutor["execute"]>[1],
     harnessId: string,
   ): Promise<FixtureHarness> {
@@ -220,7 +402,7 @@ export class TracerExecutor implements RunnerExecutor {
   }
 
   private async pluginHarness(
-    lease: RunnerLease,
+    lease: AgenticLease,
     context: Parameters<RunnerExecutor["execute"]>[1],
     selected: PluginExecutionRef,
   ): Promise<McpAwareFixtureHarness> {
@@ -288,7 +470,7 @@ export class TracerExecutor implements RunnerExecutor {
   }
 
   private withMcpProfiles(
-    lease: RunnerLease,
+    lease: AgenticLease,
     harness: FixtureHarness,
   ): FixtureHarness {
     const selected = lease.execution.target.toolset.mcpProfiles;
@@ -397,7 +579,9 @@ export class TracerExecutor implements RunnerExecutor {
     };
   }
 
-  private async llmBenchHarness(lease: RunnerLease): Promise<FixtureHarness> {
+  private async openRouterProvider(
+    lease: RunnerLease,
+  ): Promise<{ provider: OpenRouterProvider; secret: string }> {
     const credential = lease.execution.credential;
     if (credential === null) {
       throw new Error(
@@ -417,12 +601,18 @@ export class TracerExecutor implements RunnerExecutor {
     const resolver = new CredentialResolver(this.options.identity, {
       openrouter: credential.sealed,
     });
-    const secret = await resolver.resolve("openrouter");
-    assertOpenRouterCredential(secret.reveal());
+    const resolved = await resolver.resolve("openrouter");
+    const secret = resolved.reveal();
+    assertOpenRouterCredential(secret);
     const provider = new OpenRouterProvider({
-      apiKey: secret,
+      apiKey: resolved,
       fetch: this.options.openRouterFetch,
     });
+    return { provider, secret };
+  }
+
+  private async llmBenchHarness(lease: AgenticLease): Promise<FixtureHarness> {
+    const { provider, secret } = await this.openRouterProvider(lease);
     const boundedProvider: HarnessProvider = {
       complete: (request, options) =>
         provider.complete(
@@ -443,7 +633,7 @@ export class TracerExecutor implements RunnerExecutor {
           tools,
           root: workspace.root,
           signal,
-          secrets: [secret.reveal()],
+          secrets: [secret],
           limits: {
             maxDurationMs: lease.execution.limits.maxDurationMs,
             maxToolCalls: lease.execution.limits.maxToolCalls,
@@ -504,7 +694,7 @@ class StreamingEventSpool extends JsonlEventSpool {
 }
 
 function validateLocalWorkload(
-  lease: RunnerLease,
+  lease: AgenticLease,
 ): ReturnType<typeof repairScenario> {
   if (lease.benchmark.id !== "repository-repair") {
     throw new Error(`Unsupported benchmark: ${lease.benchmark.id}`);
@@ -535,6 +725,58 @@ function validateLocalWorkload(
   return scenario;
 }
 
+function isResponseLease(lease: RunnerLease): lease is ResponseLease {
+  return lease.execution.workload.kind === "response";
+}
+
+function validateResponseWorkload(lease: ResponseLease): {
+  benchmark: ResponseBenchmark;
+  responseCase: ResponseWorkload["case"];
+} {
+  const benchmark: ResponseBenchmark =
+    lease.benchmark.id === "structured-output"
+      ? new StructuredOutputBenchmark()
+      : lease.benchmark.id === "instruction-following"
+        ? new InstructionFollowingBenchmark()
+        : lease.benchmark.id === "performance"
+          ? new PerformanceBenchmark()
+          : (() => {
+              throw new Error(`Unsupported benchmark: ${lease.benchmark.id}`);
+            })();
+  if (lease.benchmark.version !== benchmark.manifest.version) {
+    throw new Error(
+      `Unsupported ${benchmark.id} benchmark version: ${lease.benchmark.version}`,
+    );
+  }
+  const responseCase = benchmark
+    .cases()
+    .find((candidate) => candidate.id === lease.execution.workload.case.id);
+  if (
+    responseCase === undefined ||
+    !isDeepStrictEqual(responseCase, lease.execution.workload.case)
+  ) {
+    throw new Error(
+      `Leased response case ${lease.execution.workload.case.id} does not match the local benchmark case.`,
+    );
+  }
+  return { benchmark, responseCase };
+}
+
+function validateResponseTarget(
+  lease: ResponseLease,
+  benchmark: ResponseBenchmark,
+  inventory?: RunnerInventory,
+): void {
+  const [blocker] = targetCompatibilityBlockers(
+    lease.execution.target,
+    benchmark.requiredCapabilities,
+    lease.execution.target.toolset.tools,
+    undefined,
+    inventory,
+  );
+  if (blocker) throw new Error(blocker);
+}
+
 function validateTarget(
   lease: RunnerLease,
   inventory?: RunnerInventory,
@@ -551,7 +793,7 @@ function validateTarget(
 }
 
 function processFixtureHarness(
-  lease: RunnerLease,
+  lease: AgenticLease,
   context: Parameters<RunnerExecutor["execute"]>[1],
   adapter: CodexHarness | ClaudeHarness,
 ): FixtureHarness {
@@ -575,8 +817,20 @@ function processFixtureHarness(
   };
 }
 
+function responseRequestSignal(
+  lease: ResponseLease,
+  executionSignal: AbortSignal,
+  deadline: AbortSignal | undefined,
+): AbortSignal {
+  return AbortSignal.any([
+    executionSignal,
+    ...(deadline === undefined ? [] : [deadline]),
+    AbortSignal.timeout(lease.execution.limits.maxDurationMs),
+  ]);
+}
+
 function adapterRequest(
-  lease: RunnerLease,
+  lease: AgenticLease,
   context: Parameters<RunnerExecutor["execute"]>[1],
   workspaceRoot: string,
 ): AdapterRunRequest {
@@ -598,6 +852,26 @@ function adapterRequest(
   };
 }
 
+function responseAdapterRequest(
+  lease: ResponseLease,
+  signal: AbortSignal,
+  workspaceRoot: string,
+): AdapterRunRequest {
+  return {
+    mode: "response",
+    jobId: lease.jobId,
+    caseId: lease.execution.workload.case.id,
+    prompt: lease.execution.workload.case.prompt,
+    workspaceRoot,
+    benchmark: lease.benchmark,
+    modelRouteId: lease.execution.target.modelRoute.id,
+    toolset: lease.execution.target.toolset,
+    limits: lease.execution.limits,
+    checkpoint: null,
+    signal,
+  };
+}
+
 function checkpointFor(
   lease: RunnerLease,
   checkpoint: RunnerCheckpoint,
@@ -605,7 +879,7 @@ function checkpointFor(
   return { jobId: lease.jobId, ...checkpoint };
 }
 
-function taskPrompt(lease: RunnerLease): string {
+function taskPrompt(lease: AgenticLease): string {
   const fixture = repairFixture(
     lease.execution.workload.task.id as RepairFixtureId,
   );

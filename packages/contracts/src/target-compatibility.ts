@@ -17,7 +17,7 @@ export const LLMBENCH_REPOSITORY_TOOLS = [
 const SUPPORTED_HARNESS_VERSION = "1.0.0";
 const SUPPORTED_TOOLSET_VERSION = "1.0.0";
 const nativeHarnesses = new Set(["codex", "claude", "pi"]);
-const preflightedNativeHarnesses = new Set(["codex", "claude"]);
+const preflightedNativeHarnesses = new Set(["codex", "claude", "pi"]);
 const supportedHarnesses = new Set(["llmbench", ...nativeHarnesses]);
 const semanticCliVersion =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;

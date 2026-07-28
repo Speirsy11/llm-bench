@@ -36,6 +36,10 @@ class JsonBenchmark extends ResponseBenchmark {
   override cases(): ResponseCase[] {
     return [];
   }
+
+  override grade(): [] {
+    return [];
+  }
 }
 
 class StubHarness extends HarnessAdapter {

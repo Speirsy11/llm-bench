@@ -71,13 +71,16 @@ describe("dashboard page", () => {
     );
 
     const element = await DashboardPage();
-    const props = element.props as { previews: unknown };
-    expect(props.previews).toEqual({
-      llmbench: { harnessId: "llmbench" },
-      codex: { harnessId: "codex" },
-      claude: { harnessId: "claude" },
+    const props = element.props as {
+      previews: Record<string, { harnessId: string }>;
+    };
+    expect(Object.keys(props.previews)).toHaveLength(12);
+    expect(props.previews).toMatchObject({
+      "repository-repair:llmbench": { harnessId: "llmbench" },
+      "structured-output:codex": { harnessId: "codex" },
+      "performance:claude": { harnessId: "claude" },
     });
-    expect(mocks.previewExperiment).toHaveBeenCalledTimes(3);
+    expect(mocks.previewExperiment).toHaveBeenCalledTimes(12);
     expect(mocks.previewExperiment).toHaveBeenNthCalledWith(
       1,
       { userId: "user-1" },
@@ -184,16 +187,20 @@ describe("dashboard page", () => {
     );
 
     const element = await DashboardPage();
-    const props = element.props as { previews: unknown };
-    expect(props.previews).toEqual({
-      codex: { harnessId: "codex" },
-      claude: { harnessId: "claude" },
+    const props = element.props as {
+      previews: Record<string, { harnessId: string }>;
+    };
+    expect(Object.keys(props.previews)).toHaveLength(8);
+    expect(props.previews).toMatchObject({
+      "repository-repair:codex": { harnessId: "codex" },
+      "performance:claude": { harnessId: "claude" },
     });
-    expect(mocks.previewExperiment).toHaveBeenCalledTimes(2);
+    expect(mocks.previewExperiment).toHaveBeenCalledTimes(8);
     expect(mocks.previewExperiment).toHaveBeenCalledWith(
       { userId: "user-1" },
       {
-        name: "Repository repair",
+        name: "repository-repair",
+        benchmarkId: "repository-repair",
         runnerId: "runner-1",
         modelRoutes: [
           { id: "codex-gpt-5.4", provider: "codex", model: "gpt-5.4" },

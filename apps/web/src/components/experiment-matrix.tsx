@@ -3,11 +3,39 @@
 import type { DashboardHarnessId } from "@/app/dashboard/matrix";
 import { useState } from "react";
 
-import type { ExperimentPreview } from "@llm-bench/control-plane";
+import type {
+  Capability,
+  HarnessManifest,
+  ModelRoute,
+  Toolset,
+} from "@llm-bench/contracts";
 
 export type DashboardHarnessPreviews = Partial<
-  Record<DashboardHarnessId, ExperimentPreview>
+  Record<DashboardHarnessId, DashboardExperimentPreview>
 >;
+
+interface DashboardExperimentPreview {
+  readonly input: {
+    readonly name: string;
+    readonly runnerId: string;
+    readonly benchmarkId?: string;
+    readonly credentialProfileId?: string;
+    readonly modelRoutes: readonly ModelRoute[];
+    readonly harnesses: readonly HarnessManifest[];
+    readonly toolsets: readonly Toolset[];
+  };
+  readonly projectedJobCount: number;
+  readonly spend: { readonly kind: "unknown" };
+  readonly canLaunch: boolean;
+  readonly blockers: readonly string[];
+  readonly order: readonly {
+    readonly position: number;
+    readonly modelRouteId: string;
+    readonly harnessId: string;
+    readonly toolsetId: string;
+    readonly requiredCapabilities: readonly Capability[];
+  }[];
+}
 
 export interface AdvertisedPluginChoice {
   readonly id: string;
@@ -24,11 +52,16 @@ export interface AdvertisedMcpProfile {
 }
 
 type FormAction = (formData: FormData) => void | Promise<void>;
+interface BenchmarkChoice {
+  readonly id: string;
+  readonly targetKind: "response" | "workspace";
+}
 
 export function ExperimentMatrix({
   action,
   advertisedMcpProfiles = [],
   advertisedPlugins = [],
+  benchmarkCatalog,
   credentialProfileId,
   initialHarnessId,
   previews,
@@ -37,13 +70,19 @@ export function ExperimentMatrix({
   readonly action?: FormAction;
   readonly advertisedMcpProfiles?: readonly AdvertisedMcpProfile[];
   readonly advertisedPlugins?: readonly AdvertisedPluginChoice[];
+  readonly benchmarkCatalog: readonly [BenchmarkChoice, ...BenchmarkChoice[]];
   readonly credentialProfileId?: string;
   readonly initialHarnessId: DashboardHarnessId;
   readonly previews: DashboardHarnessPreviews;
   readonly runnerId: string | null;
 }) {
   const [harnessId, setHarnessId] = useState(initialHarnessId);
-  const preview = previews[harnessId] ?? null;
+  const [benchmarkId, setBenchmarkId] = useState("repository-repair");
+  const preview =
+    previews[`${benchmarkId}:${harnessId}`] ?? previews[harnessId] ?? null;
+  const benchmark =
+    benchmarkCatalog.find(({ id }) => id === benchmarkId) ??
+    benchmarkCatalog[0];
   const canLaunch = Boolean(runnerId && preview?.canLaunch);
 
   return (
@@ -67,12 +106,27 @@ export function ExperimentMatrix({
                   className="border-input bg-background rounded-md border px-3 py-2"
                   name="name"
                   required
-                  defaultValue="Repository repair"
+                  defaultValue="Benchmark comparison"
                 />
+              </label>
+              <label className="grid gap-2 text-sm font-medium">
+                Benchmark
+                <select
+                  className="border-input bg-background rounded-md border px-3 py-2"
+                  name="benchmarkId"
+                  value={benchmarkId}
+                  onChange={(event) => setBenchmarkId(event.target.value)}
+                >
+                  {benchmarkCatalog.map((choice) => (
+                    <option key={choice.id} value={choice.id}>
+                      {choice.id} · {choice.targetKind}
+                    </option>
+                  ))}
+                </select>
               </label>
               <fieldset className="grid gap-3">
                 <legend className="text-sm font-medium">Harness</legend>
-                {previews.llmbench ? (
+                {previews[`${benchmarkId}:llmbench`] || previews.llmbench ? (
                   <HarnessChoice
                     disabled={!credentialProfileId}
                     harnessId="llmbench"
@@ -81,7 +135,7 @@ export function ExperimentMatrix({
                     select={setHarnessId}
                   />
                 ) : null}
-                {previews.codex ? (
+                {previews[`${benchmarkId}:codex`] || previews.codex ? (
                   <HarnessChoice
                     disabled={false}
                     harnessId="codex"
@@ -90,7 +144,7 @@ export function ExperimentMatrix({
                     select={setHarnessId}
                   />
                 ) : null}
-                {previews.claude ? (
+                {previews[`${benchmarkId}:claude`] || previews.claude ? (
                   <HarnessChoice
                     disabled={false}
                     harnessId="claude"
@@ -99,7 +153,17 @@ export function ExperimentMatrix({
                     select={setHarnessId}
                   />
                 ) : null}
+                {previews[`${benchmarkId}:pi`] || previews.pi ? (
+                  <HarnessChoice
+                    disabled={false}
+                    harnessId="pi"
+                    label="Pi"
+                    selectedHarnessId={harnessId}
+                    select={setHarnessId}
+                  />
+                ) : null}
                 {advertisedPlugins.map((plugin) =>
+                  previews[`${benchmarkId}:${plugin.id}`] ||
                   previews[plugin.id] ? (
                     <HarnessChoice
                       disabled={false}
@@ -159,7 +223,7 @@ export function ExperimentMatrix({
                 </fieldset>
               ) : null}
               <p className="text-muted-foreground text-xs">
-                Codex and Claude use their selected native model and local
+                Codex, Claude, and Pi use their selected native model and local
                 authentication. Hosted credentials are sent only to LLMBench.
               </p>
               <label className="flex items-center gap-3 text-sm">
@@ -196,7 +260,7 @@ export function ExperimentMatrix({
                 </p>
                 <p className="text-muted-foreground text-sm">
                   projected {preview.projectedJobCount === 1 ? "job" : "jobs"}
-                  {" · spend unknown"}
+                  {` · ${benchmark.targetKind} target · spend unknown`}
                 </p>
               </div>
               {preview.blockers.length > 0 ? (

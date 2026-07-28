@@ -14,6 +14,7 @@ import { getDashboardControlPlane } from "@/app/dashboard/runtime";
 import { DashboardShell } from "@/components/dashboard-shell";
 
 import { nativeHarnessCliBlocker } from "@llm-bench/contracts";
+import { benchmarkCatalog } from "@llm-bench/control-plane";
 
 interface DashboardPageProps {
   readonly searchParams?: Promise<{
@@ -59,17 +60,23 @@ export default async function DashboardPage({
         .filter((id) => !DASHBOARD_HARNESS_IDS.includes(id as never)),
     ];
     const entries = await Promise.all(
-      enabledHarnesses.map(async (harnessId) => {
-        const preview = await controlPlane.dashboard.previewExperiment(actor, {
-          name: "Repository repair",
-          runnerId: selectedRunner.id,
-          ...(harnessId === "llmbench" && selectedCredential
-            ? { credentialProfileId: selectedCredential.id }
-            : {}),
-          ...dashboardMatrixForHarness(harnessId, selectedRunner.inventory),
-        });
-        return [harnessId, preview] as const;
-      }),
+      benchmarkCatalog.flatMap((benchmark) =>
+        enabledHarnesses.map(async (harnessId) => {
+          const preview = await controlPlane.dashboard.previewExperiment(
+            actor,
+            {
+              name: benchmark.id,
+              benchmarkId: benchmark.id,
+              runnerId: selectedRunner.id,
+              ...(harnessId === "llmbench" && selectedCredential
+                ? { credentialProfileId: selectedCredential.id }
+                : {}),
+              ...dashboardMatrixForHarness(harnessId, selectedRunner.inventory),
+            },
+          );
+          return [`${benchmark.id}:${harnessId}`, preview] as const;
+        }),
+      ),
     );
     Object.assign(previews, Object.fromEntries(entries));
   }

@@ -38,6 +38,16 @@ import { TracerExecutor } from "./tracer-executor";
 const RUNNER_ID = "70b70847-ec1c-4aeb-ac0f-bf7db0328efe";
 const OTHER_RUNNER_ID = "f4a6453c-cdd4-405b-9733-39af0f6d829e";
 
+type AgenticWorkload = Extract<
+  RunnerLease["execution"]["workload"],
+  { kind: "agentic" }
+>;
+type AgenticLease = Omit<RunnerLease, "execution"> & {
+  execution: Omit<RunnerLease["execution"], "workload"> & {
+    workload: AgenticWorkload;
+  };
+};
+
 function nonErrorFailure(message: string): Error {
   return message as unknown as Error;
 }
@@ -219,6 +229,322 @@ describe("TracerExecutor", () => {
       expect(JSON.stringify(request)).not.toContain("must-never-be-opened");
     },
   );
+
+  it.each(["codex", "claude", "pi"] as const)(
+    "runs a structured-output response case through the %s built-in harness",
+    async (harnessId) => {
+      const root = await temporaryRoot();
+      const process = new ResponseProcessRunner(harnessId);
+      let time = 0;
+
+      const result = await new TracerExecutor(root, {
+        processRunners: { [harnessId]: process },
+        now: () => {
+          time += 100;
+          return time;
+        },
+      }).execute(responseLeaseFor(harnessId), context());
+
+      expect(result).toMatchObject({
+        status: "completed",
+        artifacts: [{ kind: "response_evidence" }],
+      });
+      expect(result.observations).toEqual(
+        expect.arrayContaining([
+          { metricId: "schema_compliance", value: 1 },
+          { metricId: "input_tokens", value: 10 },
+          { metricId: "output_tokens", value: 5 },
+          { metricId: "ttft_ms", value: null },
+          { metricId: "cost_usd", value: null },
+        ]),
+      );
+      expect(process.requests).toHaveLength(3);
+      const artifact = result.artifacts[0];
+      if (artifact === undefined) {
+        throw new Error("Expected a response evidence artifact.");
+      }
+      const evidence = JSON.parse(
+        await readFile(join(root, "artifacts", artifact.contentHash), "utf8"),
+      ) as { sampleCounts: unknown };
+      expect(evidence.sampleCounts).toEqual({ warmup: 0, measured: 3 });
+    },
+  );
+
+  it("runs a structured-output response case through the LLMBench built-in harness", async () => {
+    const root = await temporaryRoot();
+    const { identity, credential } = await llmCredential();
+    const fetch = vi.fn(() =>
+      Promise.resolve(
+        jsonResponse({
+          choices: [
+            {
+              message: {
+                content: '{"name":"Ada Lovelace","age":36,"active":true}',
+              },
+              finish_reason: "stop",
+            },
+          ],
+          usage: {
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            total_tokens: 15,
+          },
+        }),
+      ),
+    );
+    let time = 0;
+
+    const result = await new TracerExecutor(root, {
+      identity,
+      openRouterFetch: fetch,
+      deadline: new AbortController().signal,
+      now: () => {
+        time += 100;
+        return time;
+      },
+    }).execute(responseLeaseFor("llmbench", { credential }), context());
+
+    expect(result.status).toBe("completed");
+    expect(result.observations).toContainEqual({
+      metricId: "schema_compliance",
+      value: 1,
+    });
+    const providerDuration = result.observations.find(
+      (observation) => observation.metricId === "provider_duration_ms",
+    )?.value;
+    expect(typeof providerDuration).toBe("number");
+    expect(providerDuration).not.toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(3);
+    const artifact = result.artifacts[0];
+    if (artifact === undefined) {
+      throw new Error("Expected a response evidence artifact.");
+    }
+    const evidence: unknown = JSON.parse(
+      await readFile(join(root, "artifacts", artifact.contentHash), "utf8"),
+    );
+    expect(evidence).toMatchObject({
+      invocations: [
+        {
+          metadata: {
+            model: null,
+            sampleIndex: 0,
+          },
+        },
+        { metadata: { sampleIndex: 1 } },
+        { metadata: { sampleIndex: 2 } },
+      ],
+    });
+  });
+
+  it("enforces the leased duration limit on an LLMBench provider request", async () => {
+    const root = await temporaryRoot();
+    const { identity, credential } = await llmCredential();
+    const fetch = vi.fn((_url: string, init: RequestInit) => {
+      const signal = init.signal;
+      if (signal === undefined || signal === null) {
+        return Promise.reject(new Error("Expected a request signal."));
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        const abort = () =>
+          reject(new Error("Request aborted.", { cause: signal.reason }));
+        if (signal.aborted) {
+          abort();
+        } else {
+          signal.addEventListener("abort", abort, { once: true });
+        }
+      });
+    });
+    const lease = responseLeaseFor("llmbench", {
+      credential,
+      limits: {
+        maxDurationMs: 5,
+        maxToolCalls: 0,
+        maxTokens: 321,
+        maxTurns: 1,
+      },
+    });
+
+    const result = await new TracerExecutor(root, {
+      identity,
+      openRouterFetch: fetch,
+    }).execute(lease, context());
+
+    expect(result).toMatchObject({
+      status: "failed",
+      observations: [],
+      artifacts: [],
+      error: { kind: "harness_error" },
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("enforces the leased response deadline on a native harness", async () => {
+    const root = await temporaryRoot();
+    const process = new StalledResponseProcessRunner();
+    const lease = responseLeaseFor("codex", {
+      limits: {
+        maxDurationMs: 5,
+        maxToolCalls: 0,
+        maxTokens: 321,
+        maxTurns: 1,
+      },
+    });
+
+    const result = await new TracerExecutor(root, {
+      processRunners: { codex: process },
+    }).execute(lease, context());
+
+    expect(result).toMatchObject({
+      status: "failed",
+      observations: [],
+      artifacts: [],
+      error: { kind: "harness_error" },
+    });
+    expect(process.requests).toHaveLength(1);
+  });
+
+  it("rejects an incompatible response target before starting its process", async () => {
+    const root = await temporaryRoot();
+    const process = new ResponseProcessRunner("codex");
+    const lease = responseLeaseFor("codex");
+    lease.execution.target.harness.capabilities = [];
+
+    await expect(
+      new TracerExecutor(root, {
+        processRunners: { codex: process },
+      }).execute(lease, context()),
+    ).rejects.toThrow(
+      "Harness codex lacks required capability response_generation",
+    );
+    expect(process.requests).toHaveLength(0);
+  });
+
+  it.each([
+    ["instruction-following", 3],
+    ["performance", 6],
+  ] as const)(
+    "selects the local %s response benchmark and its sampling policy",
+    async (benchmarkId, expectedCalls) => {
+      const root = await temporaryRoot();
+      const process = new ResponseProcessRunner("codex");
+      const lease = responseLeaseFor("codex", {}, benchmarkId);
+
+      const result = await new TracerExecutor(root, {
+        processRunners: { codex: process },
+      }).execute(lease, context());
+
+      expect(result.status).toBe("completed");
+      expect(process.requests).toHaveLength(expectedCalls);
+      expect(
+        new TracerExecutor(root).canResume(lease, {
+          sequence: 1,
+          resumable: true,
+          state: {},
+        }),
+      ).toBe(false);
+    },
+  );
+
+  it("rejects response benchmark identity drift before starting a process", async () => {
+    const root = await temporaryRoot();
+    const process = new ResponseProcessRunner("codex");
+    const unsupported = responseLeaseFor("codex");
+    unsupported.benchmark.id = "unknown";
+    const wrongVersion = responseLeaseFor("codex");
+    wrongVersion.benchmark.version = "2.0.0";
+    const wrongCase = responseLeaseFor("codex");
+    wrongCase.execution.workload.case.prompt = "Different prompt.";
+
+    await expect(
+      new TracerExecutor(root, {
+        processRunners: { codex: process },
+      }).execute(unsupported, context()),
+    ).rejects.toThrow("Unsupported benchmark: unknown");
+    await expect(
+      new TracerExecutor(root, {
+        processRunners: { codex: process },
+      }).execute(wrongVersion, context()),
+    ).rejects.toThrow("Unsupported structured-output benchmark version");
+    await expect(
+      new TracerExecutor(root, {
+        processRunners: { codex: process },
+      }).execute(wrongCase, context()),
+    ).rejects.toThrow("does not match the local benchmark case");
+    expect(process.requests).toHaveLength(0);
+  });
+
+  it("rejects plugin and MCP response extensions before spending", async () => {
+    const root = await temporaryRoot();
+    const plugin = responseLeaseFor("codex");
+    plugin.execution.target.harness.id = "response-plugin";
+    plugin.execution.target.plugin = {
+      protocolVersion: "1.0.0",
+      contentHash: "a".repeat(64),
+    };
+    const pluginInventory: RunnerInventory = {
+      plugins: [
+        {
+          protocolVersion: "1.0.0",
+          contentHash: "a".repeat(64),
+          manifest: structuredClone(plugin.execution.target.harness),
+        },
+      ],
+      mcpProfiles: [],
+    };
+    const mcp = responseLeaseFor("codex");
+    const profile = {
+      id: "response-mcp",
+      version: "1.0.0",
+      contentHash: "b".repeat(64),
+    };
+    mcp.execution.target.harness.capabilities.push("mcp");
+    mcp.execution.target.toolset.mcpProfiles = [profile];
+
+    await expect(
+      new TracerExecutor(root, { inventory: pluginInventory }).execute(
+        plugin,
+        context(),
+      ),
+    ).rejects.toThrow(
+      "Response execution for local harness plugins is not supported",
+    );
+    await expect(
+      new TracerExecutor(root, {
+        inventory: {
+          plugins: [],
+          mcpProfiles: [{ ...profile, tools: [] }],
+        },
+      }).execute(mcp, context()),
+    ).rejects.toThrow(
+      "Response execution does not support runner-managed MCP profiles",
+    );
+  });
+
+  it("reports failed and cancelled response runs without partial aggregates", async () => {
+    const root = await temporaryRoot();
+    const process = new ResponseProcessRunner("codex", "failed");
+    const failed = await new TracerExecutor(root, {
+      processRunners: { codex: process },
+    }).execute(responseLeaseFor("codex"), context());
+    expect(failed).toMatchObject({
+      status: "failed",
+      observations: [],
+      artifacts: [],
+      error: { kind: "harness_error" },
+    });
+
+    const abort = new AbortController();
+    abort.abort();
+    const cancelled = await new TracerExecutor(root, {
+      processRunners: {
+        codex: new ResponseProcessRunner("codex", "failed"),
+      },
+    }).execute(responseLeaseFor("codex"), {
+      ...context(),
+      signal: abort.signal,
+    });
+    expect(cancelled.status).toBe("cancelled");
+  });
 
   it("executes an immutable local plugin with only explicitly granted credentials", async () => {
     const root = await temporaryRoot();
@@ -567,42 +893,41 @@ createInterface({ input: process.stdin }).once("line", (line) => {
 });`,
     );
 
-    await expect(
-      new TracerExecutor(root, {
-        inventory,
-        pluginProcessRunner: new PluginProcessRunner("completed", {
-          mcp: true,
-        }),
-        pluginRegistry: {
-          resolveExecution: () =>
-            Promise.resolve({
-              ...firstPlugin(inventory),
-              argv: ["/plugin"],
-              credentialGrants: {},
-            }),
-        },
-        mcpRegistry: {
-          get: () =>
-            Promise.resolve({
-              metadata: {
-                protocolVersion: "1",
-                ...reference,
-                label: "Real MCP",
-                capabilities: [],
-                tools: [],
-              },
-              local: {
-                argv: [process.execPath, server],
-                secretReferences: {},
-                artifactAttestations: artifactAttestationsFor([
-                  process.execPath,
-                  server,
-                ]),
-              },
-            }),
-        },
-      }).execute(lease, context()),
-    ).resolves.toMatchObject({ status: "completed" });
+    const defaultSessionResult = await new TracerExecutor(root, {
+      inventory,
+      pluginProcessRunner: new PluginProcessRunner("completed", {
+        mcp: true,
+      }),
+      pluginRegistry: {
+        resolveExecution: () =>
+          Promise.resolve({
+            ...firstPlugin(inventory),
+            argv: ["/plugin"],
+            credentialGrants: {},
+          }),
+      },
+      mcpRegistry: {
+        get: () =>
+          Promise.resolve({
+            metadata: {
+              protocolVersion: "1",
+              ...reference,
+              label: "Real MCP",
+              capabilities: [],
+              tools: [],
+            },
+            local: {
+              argv: [process.execPath, server],
+              secretReferences: {},
+              artifactAttestations: artifactAttestationsFor([
+                process.execPath,
+                server,
+              ]),
+            },
+          }),
+      },
+    }).execute(lease, context());
+    expect(defaultSessionResult).toMatchObject({ status: "completed" });
 
     await expect(
       new TracerExecutor(root, {
@@ -1461,8 +1786,8 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
 
 function leaseFor(
   harnessId: "llmbench" | "codex" | "claude" | "pi",
-  overrides: Partial<RunnerLease["execution"]> = {},
-): RunnerLease {
+  overrides: Partial<AgenticLease["execution"]> = {},
+): AgenticLease {
   const fixture = repairFixture(DEFAULT_FIXTURE_ID);
   const scenario = repairScenario(DEFAULT_FIXTURE_ID);
   const modelRoute = {
@@ -1471,7 +1796,7 @@ function leaseFor(
     model:
       harnessId === "llmbench" ? "openai/gpt-5-mini" : `${harnessId}-model-v1`,
   };
-  const execution: RunnerLease["execution"] = {
+  const execution: AgenticLease["execution"] = {
     workload: {
       kind: "agentic",
       task: scenario.task,
@@ -1524,7 +1849,7 @@ function leaseFor(
   };
 }
 
-function pluginLease(): RunnerLease {
+function pluginLease(): AgenticLease {
   const lease = leaseFor("codex");
   const route = {
     id: "example-local",
@@ -1551,6 +1876,91 @@ function pluginLease(): RunnerLease {
     },
   };
   return lease;
+}
+
+type ResponseLease = Omit<RunnerLease, "execution"> & {
+  execution: Omit<RunnerLease["execution"], "workload"> & {
+    workload: Extract<
+      RunnerLease["execution"]["workload"],
+      { kind: "response" }
+    >;
+  };
+};
+
+function responseLeaseFor(
+  harnessId: "llmbench" | "codex" | "claude" | "pi",
+  overrides: Partial<ResponseLease["execution"]> = {},
+  benchmarkId:
+    | "structured-output"
+    | "instruction-following"
+    | "performance" = "structured-output",
+): ResponseLease {
+  const modelRoute = {
+    id: `${harnessId}-model`,
+    provider: harnessId === "llmbench" ? "openrouter" : harnessId,
+    model:
+      harnessId === "llmbench" ? "openai/gpt-5-mini" : `${harnessId}-model-v1`,
+  };
+  const benchmarkCases = {
+    "structured-output": {
+      id: "customer-record",
+      prompt:
+        "Return only a JSON object for customer Ada Lovelace, age 36, with active status true.",
+      repetitions: 3,
+    },
+    "instruction-following": {
+      id: "three-short-bullets",
+      prompt:
+        "Describe reproducible benchmarking in exactly three bullet lines. Start each line with '- ' and use no more than eight words per line.",
+      repetitions: 3,
+    },
+    performance: {
+      id: "sentinel-response",
+      prompt: "Reply with exactly the word READY and nothing else.",
+      repetitions: 5,
+    },
+  } as const;
+  return {
+    jobId: "70b70847-ec1c-4aeb-ac0f-bf7db0328efe",
+    attemptId: "d0da824f-6f6a-4a01-af27-f7448d22bb39",
+    leaseToken: "lease-token",
+    benchmark: { id: benchmarkId, version: "1.0.0" },
+    execution: {
+      workload: {
+        kind: "response",
+        case: structuredClone(benchmarkCases[benchmarkId]),
+      },
+      target: {
+        modelRoute,
+        harness: {
+          id: harnessId,
+          version: "1.0.0",
+          capabilities: ["response_generation", "usage_reporting"],
+          modelRoutes: [modelRoute],
+        },
+        toolset: {
+          id: harnessId === "llmbench" ? "builtin" : "native",
+          version: "1.0.0",
+          tools:
+            harnessId === "llmbench"
+              ? ["read_file", "list_directory", "search_files", "apply_patch"]
+              : [],
+          mcpProfiles: [],
+        },
+      },
+      limits: {
+        maxDurationMs: 10_000,
+        maxToolCalls: 0,
+        maxTokens: 321,
+        maxTurns: 1,
+      },
+      credential: null,
+      ...overrides,
+    },
+    queuePosition: 0,
+    checkpoint: null,
+    cancellationRequested: false,
+  };
 }
 
 function pluginInventory(
@@ -1667,6 +2077,116 @@ class RepairProcessRunner implements ProcessRunner {
       outputBytes: 1,
       cancelled: this.outcome === "cancelled",
     };
+  }
+}
+
+class ResponseProcessRunner implements ProcessRunner {
+  readonly requests: ProcessRunRequest[] = [];
+
+  constructor(
+    private readonly harness: "codex" | "claude" | "pi",
+    private readonly outcome: "success" | "failed" = "success",
+  ) {}
+
+  run(request: ProcessRunRequest): Promise<ProcessRunResult> {
+    this.requests.push(request);
+    const output = '{"name":"Ada Lovelace","age":36,"active":true}';
+    if (this.harness === "pi") {
+      const requests = (request.stdin ?? "")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { id: number; method: string });
+      return Promise.resolve({
+        exitCode: this.outcome === "failed" ? 1 : 0,
+        signal: null,
+        stdoutLines: requests.map((message) =>
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: message.id,
+            result:
+              message.method === "initialize"
+                ? {
+                    protocolVersion: "2024-11-05",
+                    capabilities: { tools: {} },
+                  }
+                : {
+                    id: "response-1",
+                    model: "pi-model-v1",
+                    content: [{ type: "text", text: output }],
+                    usage: { input_tokens: 10, output_tokens: 5 },
+                  },
+          }),
+        ),
+        stderr: "",
+        outputBytes: 1,
+        cancelled: false,
+      });
+    }
+    return Promise.resolve({
+      exitCode: this.outcome === "failed" ? 1 : 0,
+      signal: null,
+      stdoutLines:
+        this.harness === "codex"
+          ? [
+              JSON.stringify({ type: "thread.started", thread_id: "thread-1" }),
+              JSON.stringify({
+                type: "item.completed",
+                item: { id: "item-1", type: "agent_message", text: output },
+              }),
+              JSON.stringify({
+                type: "turn.completed",
+                usage: {
+                  input_tokens: 10,
+                  cached_input_tokens: 0,
+                  output_tokens: 5,
+                  reasoning_output_tokens: 0,
+                },
+              }),
+            ]
+          : [
+              JSON.stringify({
+                type: "assistant",
+                message: {
+                  id: "msg-1",
+                  type: "message",
+                  role: "assistant",
+                  content: [{ type: "text", text: output }],
+                  model: "claude-model-v1",
+                  stop_reason: "end_turn",
+                  stop_sequence: null,
+                  usage: { input_tokens: 10, output_tokens: 5 },
+                },
+                session_id: "session-1",
+              }),
+            ],
+      stderr: "",
+      outputBytes: 1,
+      cancelled: false,
+    });
+  }
+}
+
+class StalledResponseProcessRunner implements ProcessRunner {
+  readonly requests: ProcessRunRequest[] = [];
+
+  run(request: ProcessRunRequest): Promise<ProcessRunResult> {
+    this.requests.push(request);
+    return new Promise((resolve) => {
+      const finish = () =>
+        resolve({
+          exitCode: null,
+          signal: "SIGTERM",
+          stdoutLines: [],
+          stderr: "",
+          outputBytes: 0,
+          cancelled: true,
+        });
+      if (request.signal?.aborted === true) {
+        finish();
+      } else {
+        request.signal?.addEventListener("abort", finish, { once: true });
+      }
+    });
   }
 }
 

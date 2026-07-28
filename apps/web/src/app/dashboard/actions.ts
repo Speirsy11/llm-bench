@@ -55,6 +55,7 @@ export async function launchExperimentAction(formData: FormData) {
       : matrix.modelRoutes;
   await dashboard.launchExperiment(actor, {
     name: requiredString(formData, "name"),
+    benchmarkId: optionalString(formData, "benchmarkId") ?? "repository-repair",
     runnerId,
     ...(harnessId === "llmbench"
       ? {
@@ -85,6 +86,13 @@ export async function retryJobAction(formData: FormData) {
     requiredString(formData, "jobId"),
   );
   revalidatePath("/dashboard");
+}
+
+function optionalString(formData: FormData, key: string): string | null {
+  const value = formData.get(key);
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : null;
 }
 
 function requiredString(formData: FormData, key: string): string {

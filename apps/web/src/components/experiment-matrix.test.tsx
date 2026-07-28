@@ -6,6 +6,7 @@ import { act, create } from "react-test-renderer";
 import { describe, expect, it } from "vitest";
 
 import type { ExperimentPreview } from "@llm-bench/control-plane";
+import { benchmarkCatalog } from "@llm-bench/control-plane";
 
 import { ExperimentMatrix } from "./experiment-matrix";
 
@@ -15,6 +16,7 @@ describe("ExperimentMatrix", () => {
     await act(() => {
       renderer = create(
         <ExperimentMatrix
+          benchmarkCatalog={benchmarkCatalog}
           credentialProfileId="credential-1"
           initialHarnessId="llmbench"
           previews={{
@@ -83,6 +85,7 @@ describe("ExperimentMatrix", () => {
     await act(() => {
       renderer = create(
         <ExperimentMatrix
+          benchmarkCatalog={benchmarkCatalog}
           credentialProfileId="credential-1"
           initialHarnessId="llmbench"
           previews={{
@@ -124,6 +127,7 @@ describe("ExperimentMatrix", () => {
     await act(() => {
       renderer = create(
         <ExperimentMatrix
+          benchmarkCatalog={benchmarkCatalog}
           initialHarnessId="codex"
           previews={{
             codex: previewFixture({
@@ -167,6 +171,7 @@ describe("ExperimentMatrix", () => {
               supportsMcp: true,
             },
           ]}
+          benchmarkCatalog={benchmarkCatalog}
           initialHarnessId="example-repair"
           previews={{
             "example-repair": previewFixture({
@@ -191,6 +196,69 @@ describe("ExperimentMatrix", () => {
       renderer.root.findAllByProps({ name: "mcpProfile", value: "github" }),
     ).toHaveLength(1);
     expect(renderedText(renderer)).toContain("github · v1.0.0");
+    renderer.unmount();
+  });
+
+  it("switches between truthfully labeled response and workspace benchmarks", async () => {
+    let renderer: ReactTestRenderer | undefined;
+    await act(() => {
+      renderer = create(
+        <ExperimentMatrix
+          benchmarkCatalog={benchmarkCatalog}
+          initialHarnessId="pi"
+          previews={{
+            "repository-repair:pi": {
+              ...previewFixture({
+                harnessId: "pi",
+                modelRouteIds: ["pi-gpt-5.4"],
+                toolsetId: "native",
+              }),
+              canLaunch: false,
+              blockers: ["Harness pi lacks required capability workspaces."],
+            },
+            "performance:pi": {
+              ...previewFixture({
+                harnessId: "pi",
+                modelRouteIds: ["pi-gpt-5.4"],
+                toolsetId: "native",
+              }),
+              input: {
+                ...previewFixture({
+                  harnessId: "pi",
+                  modelRouteIds: ["pi-gpt-5.4"],
+                  toolsetId: "native",
+                }).input,
+                benchmarkId: "performance",
+              },
+            },
+          }}
+          runnerId="runner-1"
+        />,
+      );
+    });
+    if (!renderer) throw new Error("Renderer was not created.");
+
+    expect(renderedText(renderer)).toContain(
+      "Harness pi lacks required capability workspaces.",
+    );
+    const benchmarkSelect = renderer.root.findByProps({
+      name: "benchmarkId",
+    });
+    await act(() =>
+      (
+        benchmarkSelect.props as {
+          onChange(event: { target: { value: string } }): void;
+        }
+      ).onChange({ target: { value: "performance" } }),
+    );
+
+    expect(renderedText(renderer)).toContain("response target");
+    expect(renderedText(renderer)).not.toContain(
+      "Harness pi lacks required capability workspaces.",
+    );
+    expect(
+      renderer.root.findAllByProps({ name: "harness", value: "pi" }),
+    ).toHaveLength(1);
     renderer.unmount();
   });
 });

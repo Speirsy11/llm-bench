@@ -6,6 +6,26 @@ import { createDashboardExperimentService } from "./dashboard-experiments";
 type DashboardDatabase = Parameters<typeof createDashboardExperimentService>[0];
 
 describe("createDashboardExperimentService", () => {
+  it("rejects unsupported benchmark identifiers before loading a runner", async () => {
+    const service = createDashboardExperimentService(
+      {} as unknown as DashboardDatabase,
+    );
+
+    await expect(
+      service.previewExperiment(
+        { userId: "owner-1", githubLogin: "owner", isAdmin: false },
+        {
+          name: "Unsupported benchmark",
+          runnerId: randomUUID(),
+          benchmarkId: "not-in-the-catalog",
+          modelRoutes: [],
+          harnesses: [],
+          toolsets: [],
+        },
+      ),
+    ).rejects.toThrow("Unsupported benchmark: not-in-the-catalog.");
+  });
+
   it("uses a generic launch rejection when preview has no blockers", async () => {
     const service = createDashboardExperimentService(
       {} as unknown as DashboardDatabase,
@@ -147,5 +167,79 @@ describe("createDashboardExperimentService", () => {
         experimentId,
       ),
     ).rejects.toThrow(`Experiment target not found for job ${jobId}.`);
+  });
+
+  it("keeps legacy and unknown benchmark jobs readable without inventing metrics", async () => {
+    const experimentId = randomUUID();
+    const targetId = randomUUID();
+    const legacyJobId = randomUUID();
+    const unknownJobId = randomUUID();
+    const db = {
+      query: {
+        experiments: {
+          findFirst: () =>
+            Promise.resolve({
+              id: experimentId,
+              ownerId: "owner-1",
+              name: "Legacy experiment",
+            }),
+        },
+        targets: {
+          findMany: () =>
+            Promise.resolve([
+              {
+                id: targetId,
+                position: 0,
+                modelRoute: { id: "route" },
+                harness: { id: "llmbench" },
+                toolset: { id: "builtin" },
+              },
+            ]),
+        },
+        jobs: {
+          findMany: () =>
+            Promise.resolve([
+              {
+                id: legacyJobId,
+                targetId,
+                benchmarkId: null,
+                status: "queued",
+                retryOfJobId: null,
+                cancellationRequested: false,
+              },
+              {
+                id: unknownJobId,
+                targetId,
+                benchmarkId: "removed-benchmark",
+                status: "queued",
+                retryOfJobId: null,
+                cancellationRequested: false,
+              },
+            ]),
+        },
+        attempts: { findMany: () => Promise.resolve([]) },
+        results: { findMany: () => Promise.resolve([]) },
+        metrics: { findMany: () => Promise.resolve([]) },
+      },
+    } as unknown as DashboardDatabase;
+    const service = createDashboardExperimentService(db);
+
+    const detail = await service.getExperiment(
+      { userId: "owner-1", githubLogin: "owner", isAdmin: false },
+      experimentId,
+    );
+
+    expect(detail?.jobs).toEqual([
+      expect.objectContaining({
+        id: legacyJobId,
+        benchmark: null,
+        primaryMetric: null,
+      }),
+      expect.objectContaining({
+        id: unknownJobId,
+        benchmark: null,
+        primaryMetric: null,
+      }),
+    ]);
   });
 });

@@ -4,6 +4,7 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type {
   Capability,
   HarnessManifest,
+  Limits,
   MetricDirection,
   MetricKind,
   MetricObservation,
@@ -27,9 +28,9 @@ import type { AuthContext } from "./access-policy";
 import type { PairedRunner } from "./runner-protocol";
 import type * as schemaType from "./schema";
 import {
-  repositoryRepairBenchmark,
-  repositoryRepairLimits,
-  repositoryRepairWorkload,
+  benchmarkDefinitionForId,
+  limitsForBenchmark,
+  workloadForBenchmark,
 } from "./benchmark-registry";
 import {
   attempts,
@@ -61,6 +62,7 @@ export interface SaveCredentialProfileInput {
 export interface ExperimentMatrixInput {
   readonly name: string;
   readonly runnerId: string;
+  readonly benchmarkId?: string;
   readonly credentialProfileId?: string;
   readonly modelRoutes: readonly ModelRoute[];
   readonly harnesses: readonly HarnessManifest[];
@@ -114,6 +116,11 @@ export interface DashboardJobDetail {
   readonly status: typeof jobs.$inferSelect.status;
   readonly retryOfJobId: string | null;
   readonly cancellationRequested: boolean;
+  readonly benchmark: {
+    readonly id: string;
+    readonly kind: "response" | "agentic";
+    readonly targetKind: "response" | "workspace";
+  } | null;
   readonly target: {
     readonly position: number;
     readonly modelRoute: ModelRoute;
@@ -202,6 +209,7 @@ export function createDashboardExperimentService(db: Database) {
       input: ExperimentMatrixInput,
     ): Promise<ExperimentPreview> {
       const normalized = normalizeMatrixInput(input);
+      const benchmark = requireBenchmark(normalized.benchmarkId);
       const runner = await requireOwnedRunner(db, actor, normalized.runnerId);
       if (requiresHostedCredential(normalized)) {
         if (!normalized.credentialProfileId) {
@@ -224,9 +232,9 @@ export function createDashboardExperimentService(db: Database) {
         modelRouteId: item.modelRoute.id,
         harnessId: item.harness.id,
         toolsetId: item.toolset.id,
-        requiredCapabilities: repositoryRepairBenchmark.requiredCapabilities,
+        requiredCapabilities: benchmark.requiredCapabilities,
       }));
-      const blockers = blockersFor(normalized, runner);
+      const blockers = blockersFor(normalized, runner, benchmark);
       return {
         input: normalized,
         projectedJobCount: order.length,
@@ -255,6 +263,9 @@ export function createDashboardExperimentService(db: Database) {
         preview.input.runnerId,
       );
       const targetInputs = expandRoundRobin(preview.input);
+      const benchmark = requireBenchmark(preview.input.benchmarkId);
+      const workload = requireWorkload(benchmark.id);
+      const limits = requireLimits(benchmark.id);
       return db.transaction(async (transaction) => {
         const credential = requiresHostedCredential(preview.input)
           ? await loadLaunchCredential(
@@ -293,20 +304,20 @@ export function createDashboardExperimentService(db: Database) {
             item,
             credential,
             runner.inventory,
+            workload,
+            limits,
           );
           await transaction.insert(jobs).values({
             experimentId: experiment.id,
             targetId: target.id,
             runnerId: preview.input.runnerId,
             credentialProfileId: execution.credential?.profileId ?? null,
-            benchmarkId: repositoryRepairBenchmark.id,
-            benchmarkVersion: repositoryRepairBenchmark.version,
+            benchmarkId: benchmark.id,
+            benchmarkVersion: benchmark.version,
             execution: clone(execution),
             workload: clone(execution.workload),
             limits: clone(execution.limits),
-            requiredCapabilities: [
-              ...repositoryRepairBenchmark.requiredCapabilities,
-            ],
+            requiredCapabilities: [...benchmark.requiredCapabilities],
           });
         }
         return {
@@ -389,6 +400,7 @@ export function createDashboardExperimentService(db: Database) {
           status: job.status,
           retryOfJobId: job.retryOfJobId,
           cancellationRequested: job.cancellationRequested,
+          benchmark: benchmarkLabelFor(job.benchmarkId),
           target: {
             position: target.position,
             modelRoute: target.modelRoute as ModelRoute,
@@ -396,6 +408,7 @@ export function createDashboardExperimentService(db: Database) {
             toolset: target.toolset as Toolset,
           },
           primaryMetric: primaryMetricFor({
+            benchmarkId: job.benchmarkId,
             result: result ?? null,
             metrics: result
               ? (metricsByResultId.get(
@@ -566,6 +579,7 @@ function normalizeMatrixInput(
   return {
     name: input.name.trim(),
     runnerId: input.runnerId,
+    benchmarkId: input.benchmarkId ?? "repository-repair",
     credentialProfileId: input.credentialProfileId,
     modelRoutes: input.modelRoutes.map(clone),
     harnesses: input.harnesses.map(clone),
@@ -585,11 +599,13 @@ function executionSnapshotFor(
   },
   credential: typeof credentialProfiles.$inferSelect | null,
   inventory: RunnerInventory,
+  workload: RunnerExecution["workload"],
+  limits: Limits,
 ): RunnerExecution {
   return RunnerExecutionSchema.parse({
-    workload: repositoryRepairWorkload,
+    workload,
     target: executionTargetForRunner(target, inventory),
-    limits: repositoryRepairLimits,
+    limits,
     credential:
       target.harness.id === "llmbench" && credential
         ? {
@@ -646,6 +662,7 @@ function expandRoundRobin(input: ExperimentMatrixInput) {
 function blockersFor(
   input: ExperimentMatrixInput,
   runner: typeof runners.$inferSelect,
+  benchmark: ReturnType<typeof requireBenchmark>,
 ): string[] {
   const blockers: string[] = [];
   if (input.name.length === 0) blockers.push("Experiment name is required.");
@@ -662,7 +679,7 @@ function blockersFor(
   }
   const runnerCapabilities = runner.capabilities as Capability[];
   const runnerMissing = missingCapabilities(
-    repositoryRepairBenchmark.requiredCapabilities,
+    benchmark.requiredCapabilities,
     runnerCapabilities,
   );
   if (runnerMissing.length > 0) {
@@ -670,10 +687,18 @@ function blockersFor(
   }
   for (const target of expandRoundRobin(input)) {
     const executionTarget = executionTargetForRunner(target, runner.inventory);
+    if (benchmark.kind === "response" && executionTarget.plugin !== undefined) {
+      const blocker =
+        "Response execution for local harness plugins is not supported.";
+      if (!blockers.includes(blocker)) blockers.push(blocker);
+      continue;
+    }
     for (const blocker of targetCompatibilityBlockers(
       executionTarget,
-      repositoryRepairBenchmark.requiredCapabilities,
-      LLMBENCH_REPOSITORY_TOOLS,
+      benchmark.requiredCapabilities,
+      benchmark.kind === "agentic"
+        ? LLMBENCH_REPOSITORY_TOOLS
+        : executionTarget.toolset.tools,
       (runner.environment as RunnerEnvironment).harnessVersions,
       runner.inventory,
     )) {
@@ -695,14 +720,19 @@ function snapshotFor(
   input: ExperimentMatrixInput,
   order: readonly TargetPreview[],
 ): Record<string, unknown> {
+  const benchmark = requireBenchmark(input.benchmarkId);
+  const workload = requireWorkload(benchmark.id);
+  const limits = requireLimits(benchmark.id);
   return clone({
     benchmark: {
-      id: repositoryRepairBenchmark.id,
-      version: repositoryRepairBenchmark.version,
-      primaryMetricId: repositoryRepairBenchmark.primaryMetric.id,
+      id: benchmark.id,
+      version: benchmark.version,
+      kind: benchmark.kind,
+      targetKind: benchmark.targetKind,
+      primaryMetricId: benchmark.primaryMetric.id,
     },
-    workload: repositoryRepairWorkload,
-    limits: repositoryRepairLimits,
+    workload,
+    limits,
     runnerId: input.runnerId,
     credentialProfileId: input.credentialProfileId ?? null,
     modelRoutes: input.modelRoutes,
@@ -722,16 +752,22 @@ function latestAttemptsByJobId(rows: (typeof attempts.$inferSelect)[]) {
 }
 
 function primaryMetricFor(input: {
+  benchmarkId: string | null;
   result: typeof results.$inferSelect | null;
   metrics: (typeof metrics.$inferSelect)[];
   terminal: Record<string, unknown> | null;
 }): DashboardJobDetail["primaryMetric"] {
+  const benchmark =
+    input.benchmarkId === null
+      ? null
+      : benchmarkDefinitionForId(input.benchmarkId);
+  if (benchmark === null) return null;
   const observed = input.metrics.find(
-    (metric) => metric.metricId === repositoryRepairBenchmark.primaryMetric.id,
+    (metric) => metric.metricId === benchmark.primaryMetric.id,
   );
   if (observed) {
     return {
-      ...repositoryRepairBenchmark.primaryMetric,
+      ...benchmark.primaryMetric,
       value: observed.value,
     };
   }
@@ -739,14 +775,50 @@ function primaryMetricFor(input: {
   const terminalObservations = (
     Array.isArray(observations) ? (observations as MetricObservation[]) : []
   ).filter(
-    (observation) =>
-      observation.metricId === repositoryRepairBenchmark.primaryMetric.id,
+    (observation) => observation.metricId === benchmark.primaryMetric.id,
   );
   const terminalMetric = terminalObservations[0];
   if (!terminalMetric && !input.result) return null;
   return {
-    ...repositoryRepairBenchmark.primaryMetric,
+    ...benchmark.primaryMetric,
     value: terminalMetric?.value ?? null,
+  };
+}
+
+function requireBenchmark(benchmarkId: string | undefined) {
+  const benchmark = benchmarkDefinitionForId(
+    benchmarkId ?? "repository-repair",
+  );
+  if (benchmark === null) {
+    throw new Error(`Unsupported benchmark: ${String(benchmarkId)}.`);
+  }
+  return benchmark;
+}
+
+function requireWorkload(benchmarkId: string): RunnerExecution["workload"] {
+  return clone(
+    RunnerExecutionSchema.shape.workload.parse(
+      workloadForBenchmark(benchmarkId),
+    ),
+  );
+}
+
+function requireLimits(benchmarkId: string): Limits {
+  return clone(
+    RunnerExecutionSchema.shape.limits.parse(limitsForBenchmark(benchmarkId)),
+  );
+}
+
+function benchmarkLabelFor(
+  benchmarkId: string | null,
+): DashboardJobDetail["benchmark"] {
+  if (benchmarkId === null) return null;
+  const benchmark = benchmarkDefinitionForId(benchmarkId);
+  if (benchmark === null) return null;
+  return {
+    id: benchmark.id,
+    kind: benchmark.kind,
+    targetKind: benchmark.targetKind,
   };
 }
 

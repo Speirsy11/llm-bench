@@ -11,7 +11,7 @@ import {
   ToolsetSchema,
 } from "./manifest";
 import { MetricObservationSchema } from "./metric";
-import { AgenticTaskSchema } from "./workload";
+import { AgenticTaskSchema, ResponseCaseSchema } from "./workload";
 
 export const RUNNER_PROTOCOL_VERSION = "3.0" as const;
 
@@ -96,12 +96,18 @@ export const RunnerCheckpointSchema = z.strictObject({
 });
 
 export const RunnerExecutionSchema = z.strictObject({
-  workload: z.strictObject({
-    kind: z.literal("agentic"),
-    task: AgenticTaskSchema,
-    fixtureContentHash: z.string().regex(/^[a-f0-9]{64}$/u),
-    graderHash: z.string().regex(/^[a-f0-9]{64}$/u),
-  }),
+  workload: z.discriminatedUnion("kind", [
+    z.strictObject({
+      kind: z.literal("response"),
+      case: ResponseCaseSchema,
+    }),
+    z.strictObject({
+      kind: z.literal("agentic"),
+      task: AgenticTaskSchema,
+      fixtureContentHash: z.string().regex(/^[a-f0-9]{64}$/u),
+      graderHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    }),
+  ]),
   target: z.strictObject({
     modelRoute: ModelRouteSchema,
     harness: HarnessManifestSchema,
