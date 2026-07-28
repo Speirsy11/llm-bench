@@ -48,7 +48,7 @@ describe("PluginRegistry", () => {
     });
 
     await registry.install({
-      argv: [executable, "--jsonl"],
+      executable,
       credentialGrants: { PLUGIN_TOKEN: "RUNNER_FIXTURE_TOKEN" },
     });
 
@@ -92,14 +92,14 @@ describe("PluginRegistry", () => {
         }),
     });
 
-    await expect(registry.install({ argv: [directory] })).rejects.toThrow(
+    await expect(registry.install({ executable: directory })).rejects.toThrow(
       "executable file",
     );
-    await expect(registry.install({ argv: [nonExecutable] })).rejects.toThrow(
-      "executable file",
-    );
+    await expect(
+      registry.install({ executable: nonExecutable }),
+    ).rejects.toThrow("executable file");
     const executable = await executableFixture(root, "fixture-plugin.mjs");
-    await expect(registry.install({ argv: [executable] })).rejects.toThrow(
+    await expect(registry.install({ executable })).rejects.toThrow(
       "unsupported",
     );
 
@@ -110,8 +110,8 @@ describe("PluginRegistry", () => {
           manifest: fixtureManifest("fixture-plugin"),
         }),
     });
-    await installed.install({ argv: [executable] });
-    await expect(installed.install({ argv: [executable] })).rejects.toThrow(
+    await installed.install({ executable });
+    await expect(installed.install({ executable })).rejects.toThrow(
       "already installed",
     );
 
@@ -124,9 +124,20 @@ describe("PluginRegistry", () => {
     });
     await expect(
       reserved.install({
-        argv: [await executableFixture(root, "reserved.mjs")],
+        executable: await executableFixture(root, "reserved.mjs"),
       }),
     ).rejects.toThrow("reserved built-in harness");
+  });
+
+  it("rejects interpreter-plus-script installations so the hash pins the whole plugin artifact", async () => {
+    const root = await mkdtemp(join(tmpdir(), "llm-bench-plugin-registry-"));
+    roots.push(root);
+    const script = await executableFixture(root, "plugin-script.mjs");
+    const registry = registryFor(root);
+
+    await expect(
+      registry.install({ argv: [process.execPath, script] } as never),
+    ).rejects.toThrow("self-contained executable");
   });
 
   it("keeps credential grants as names, supports revocation, and removes installations", async () => {
@@ -134,7 +145,7 @@ describe("PluginRegistry", () => {
     roots.push(root);
     const executable = await executableFixture(root, "fixture-plugin.mjs");
     const registry = registryFor(root);
-    await registry.install({ argv: [executable] });
+    await registry.install({ executable });
 
     await registry.grant("fixture-plugin", "PLUGIN_TOKEN", "RUNNER_TOKEN");
     await expect(
@@ -172,7 +183,7 @@ describe("PluginRegistry", () => {
     roots.push(root);
     const executable = await executableFixture(root, "fixture-plugin.mjs");
     const registry = registryFor(root);
-    await registry.install({ argv: [executable] });
+    await registry.install({ executable });
     await writeFile(executable, "#!/usr/bin/env node\nprocess.exit(1);\n", {
       mode: 0o700,
     });
@@ -199,8 +210,8 @@ describe("PluginRegistry", () => {
     });
 
     await Promise.all([
-      registry.install({ argv: [first] }),
-      registry.install({ argv: [second] }),
+      registry.install({ executable: first }),
+      registry.install({ executable: second }),
     ]);
     await expect(registry.list()).resolves.toHaveLength(2);
   });
@@ -215,6 +226,21 @@ describe("PluginRegistry", () => {
     await writeFile(join(root, "plugins.json"), "[{}]");
     await expect(registry.list()).rejects.toThrow("registry is invalid");
     await writeFile(join(root, "plugins.json"), "{}");
+    await expect(registry.list()).rejects.toThrow("registry is invalid");
+    await writeFile(
+      join(root, "plugins.json"),
+      JSON.stringify([
+        {
+          protocolVersion: "1.0.0",
+          contentHash: "a".repeat(64),
+          manifest: fixtureManifest("fixture-plugin"),
+          local: {
+            argv: [process.execPath, "/unhashed-plugin.mjs"],
+            credentialGrants: {},
+          },
+        },
+      ]),
+    );
     await expect(registry.list()).rejects.toThrow("registry is invalid");
   });
 });

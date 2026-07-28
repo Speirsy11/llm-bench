@@ -47,7 +47,7 @@ export class RunnerExtensionManager implements RunnerExtensionOperations {
   }
 
   readonly plugin: RunnerExtensionOperations["plugin"] = {
-    add: (argv) => this.#plugins.install({ argv }),
+    add: (executable) => this.#plugins.install({ executable }),
     remove: (id) => this.#plugins.remove(id),
     list: () => this.#plugins.list(),
     probe: (argv) => (this.options.pluginProbe ?? probeExecutablePlugin)(argv),
@@ -63,6 +63,9 @@ export class RunnerExtensionManager implements RunnerExtensionOperations {
     },
     remove: (id) => this.#mcpProfiles.remove(id),
     list: () => this.#mcpProfiles.list(),
+    grant: (id, serverName, runnerName) =>
+      this.#mcpProfiles.grant(id, serverName, runnerName),
+    revoke: (id, serverName) => this.#mcpProfiles.revoke(id, serverName),
     probe: async (id) => {
       const profile = await this.#mcpProfiles.get(id);
       const session = await (this.options.startMcp ?? startMcpSession)(

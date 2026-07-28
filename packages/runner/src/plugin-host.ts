@@ -3,6 +3,7 @@ import type {
   HandshakeReply,
   PluginCredentials,
   PluginManifest,
+  PluginMcpConnection,
   RunEvent,
   RunRequest,
   RunResult,
@@ -37,6 +38,7 @@ export interface ExecutablePluginInstallation {
 export interface ExecutablePluginRunOptions {
   attemptId: string;
   credentials?: PluginCredentials;
+  mcpConnections?: readonly PluginMcpConnection[];
 }
 
 interface ExecutablePluginHarnessOptions {
@@ -64,6 +66,7 @@ export class ExecutablePluginHarness {
       request,
       options.attemptId,
       credentials,
+      options.mcpConnections ?? [],
       this.installation.protocolVersion,
     );
     const stdin =
@@ -114,6 +117,7 @@ function pluginRunRequest(
   request: AdapterRunRequest,
   attemptId: string,
   credentials: PluginCredentials,
+  mcpConnections: readonly PluginMcpConnection[],
   protocolVersion: string,
 ): RunRequest {
   const { checkpoint } = request;
@@ -142,6 +146,7 @@ function pluginRunRequest(
             state: checkpoint.state,
           },
     credentials,
+    runtime: { mcpConnections: [...mcpConnections] },
   };
 }
 

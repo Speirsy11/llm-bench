@@ -31,6 +31,7 @@ export type SecretResolver = (reference: string) => Promise<string | undefined>;
 
 export interface McpSessionOptions {
   maxOutputBytes?: number;
+  requestTimeoutMs?: number;
   signal?: AbortSignal;
   startupTimeoutMs?: number;
 }

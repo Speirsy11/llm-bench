@@ -1,9 +1,23 @@
-import { access, chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import {
+  access,
+  chmod,
+  mkdir,
+  mkdtemp,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { startMcpSession } from "./index";
+import { startMcpSession, startMcpUnixBridge } from "./index";
+
+const execFileAsync = promisify(execFile);
 
 describe("startMcpSession", () => {
   const roots: string[] = [];
@@ -99,6 +113,78 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     await expect(session.stop()).resolves.toBeUndefined();
   });
 
+  it("bridges a real child tools/list request to the initialized stdio session", async () => {
+    const root = await mkdtemp(join(tmpdir(), "llm-bench-mcp-bridge-"));
+    roots.push(root);
+    const server = join(root, "server.mjs");
+    const client = join(root, "client.mjs");
+    await writeFile(
+      server,
+      `import { createInterface } from "node:readline";
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.method === "notifications/initialized") {
+    globalThis.initialized = true;
+    return;
+  }
+  const result = request.method === "initialize"
+    ? { protocolVersion: "2025-06-18", capabilities: { tools: {} } }
+    : globalThis.initialized
+      ? { tools: [{ name: "fixture_echo", description: "Echo a value", inputSchema: { type: "object" } }] }
+      : { blocked: true };
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+});`,
+    );
+    await writeFile(
+      client,
+      `import { createConnection } from "node:net";
+let buffer = "";
+const socket = createConnection(process.argv[2], () => {
+  socket.write(JSON.stringify({ jsonrpc: "2.0", id: "plugin-1", method: "tools/list", params: {} }) + "\\n");
+});
+socket.on("data", (chunk) => {
+  buffer += chunk;
+  const newline = buffer.indexOf("\\n");
+  if (newline === -1) return;
+  process.stdout.write(buffer.slice(0, newline));
+  socket.end();
+});`,
+    );
+    const session = await startMcpSession(profileFor(server), () =>
+      Promise.resolve(undefined),
+    );
+    await session.probe();
+    const bridgeRoot = join(root, "job-bridge");
+    const bridge = await startMcpUnixBridge(session, {
+      root: bridgeRoot,
+      socketName: "filesystem.sock",
+    });
+
+    expect((await stat(bridgeRoot)).mode & 0o777).toBe(0o700);
+    expect((await stat(bridge.socketPath)).mode & 0o777).toBe(0o600);
+    const response = await execFileAsync(process.execPath, [
+      client,
+      bridge.socketPath,
+    ]);
+    expect(JSON.parse(response.stdout)).toEqual({
+      jsonrpc: "2.0",
+      id: "plugin-1",
+      result: {
+        tools: [
+          {
+            name: "fixture_echo",
+            description: "Echo a value",
+            inputSchema: { type: "object" },
+          },
+        ],
+      },
+    });
+
+    await bridge.stop();
+    await expect(access(bridge.socketPath)).rejects.toThrow();
+    await session.stop();
+  });
+
   it("buffers a JSON-RPC response until its terminating newline arrives", async () => {
     const root = await mkdtemp(join(tmpdir(), "llm-bench-mcp-session-"));
     roots.push(root);
@@ -121,6 +207,245 @@ createInterface({ input: process.stdin }).on("line", () => {
       protocolVersion: undefined,
     });
     await session.stop();
+  });
+
+  it("ignores unrelated replies while waiting for the initialize response", async () => {
+    const root = await mkdtemp(join(tmpdir(), "llm-bench-mcp-session-"));
+    roots.push(root);
+    const fixture = join(root, "correlated-initialize.mjs");
+    await writeFile(
+      fixture,
+      `import { createInterface } from "node:readline";
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.method !== "initialize") return;
+  process.stdout.write(JSON.stringify({
+    jsonrpc: "2.0", id: 99,
+    result: { protocolVersion: "wrong", capabilities: { tools: { wrong: true } } },
+  }) + "\\n");
+  process.stdout.write(JSON.stringify({
+    jsonrpc: "2.0", id: request.id,
+    result: { protocolVersion: "2025-06-18", capabilities: { tools: {} } },
+  }) + "\\n");
+});`,
+    );
+    const session = await startMcpSession(profileFor(fixture), () =>
+      Promise.resolve(undefined),
+    );
+
+    await expect(session.probe()).resolves.toEqual({
+      protocolVersion: "2025-06-18",
+      capabilities: { tools: {} },
+    });
+    await session.stop();
+  });
+
+  it("cleans up timed-out and cancelled requests without poisoning later requests", async () => {
+    const root = await mkdtemp(join(tmpdir(), "llm-bench-mcp-session-"));
+    roots.push(root);
+    const fixture = join(root, "request-lifecycle.mjs");
+    await writeFile(
+      fixture,
+      `import { createInterface } from "node:readline";
+let requests = 0;
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.method === "initialize") {
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0", id: request.id, result: { capabilities: { tools: {} } },
+    }) + "\\n");
+    return;
+  }
+  if (request.method === "tools/list") {
+    requests += 1;
+    if (requests < 3) return;
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0", method: "notifications/progress", params: {},
+    }) + "\\n");
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0", id: request.id, result: { tools: [{ name: "healthy" }] },
+    }) + "\\n");
+  }
+});`,
+    );
+    const session = await startMcpSession(
+      profileFor(fixture),
+      () => Promise.resolve(undefined),
+      { requestTimeoutMs: 30 },
+    );
+    await session.probe();
+
+    await expect(session.request("tools/list")).rejects.toThrow(
+      "timed out after 30ms",
+    );
+    const controller = new AbortController();
+    const cancelled = session.request("tools/list", {}, controller.signal);
+    controller.abort();
+    await expect(cancelled).rejects.toThrow("cancelled");
+    const healthySignal = new AbortController();
+    await expect(
+      session.request("tools/list", {}, healthySignal.signal),
+    ).resolves.toEqual({
+      tools: [{ name: "healthy" }],
+    });
+    await session.stop();
+  });
+
+  it("fails closed before initialization, on server errors, and after shutdown", async () => {
+    const root = await mkdtemp(join(tmpdir(), "llm-bench-mcp-session-"));
+    roots.push(root);
+    const fixture = join(root, "request-errors.mjs");
+    await writeFile(
+      fixture,
+      `import { createInterface } from "node:readline";
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.method === "initialize") {
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0", id: request.id, result: { capabilities: {} },
+    }) + "\\n");
+  } else if (request.method === "tools/call") {
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0", id: request.id,
+      error: { code: -32601, message: "tool missing" },
+    }) + "\\n");
+  } else if (request.method === "tools/null-error") {
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0", id: request.id, error: null,
+    }) + "\\n");
+  } else if (request.method === "tools/message-only") {
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0", id: request.id, error: { message: "message only" },
+    }) + "\\n");
+  } else if (request.method === "tools/code-only") {
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0", id: request.id, error: { code: -32000 },
+    }) + "\\n");
+  } else if (request.method === "tools/malformed") {
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0", id: request.id,
+    }) + "\\n");
+  } else if (request.method === "exit") {
+    process.exit(0);
+  }
+});`,
+    );
+    const session = await startMcpSession(profileFor(fixture), () =>
+      Promise.resolve(undefined),
+    );
+    await expect(session.request("tools/list")).rejects.toThrow(
+      "has not initialized",
+    );
+    await session.probe();
+    await expect(
+      session.request("tools/call", {}, new AbortController().signal),
+    ).rejects.toThrow("tool missing (JSON-RPC -32601)");
+    await expect(session.request("tools/null-error")).rejects.toThrow(
+      "MCP server returned an error.",
+    );
+    await expect(session.request("tools/message-only")).rejects.toThrow(
+      "message only",
+    );
+    await expect(session.request("tools/code-only")).rejects.toThrow(
+      "MCP server returned an error. (JSON-RPC -32000)",
+    );
+    await expect(session.request("tools/malformed")).rejects.toThrow(
+      "invalid JSON-RPC response",
+    );
+    await expect(session.request("tools/list")).rejects.toThrow("not running");
+
+    const exited = await startMcpSession(profileFor(fixture), () =>
+      Promise.resolve(undefined),
+    );
+    await exited.probe();
+    await expect(exited.request("exit")).rejects.toThrow(
+      "exited before replying",
+    );
+  });
+
+  it("validates bridge requests, contains failures, and makes cleanup idempotent", async () => {
+    const root = await mkdtemp(join(tmpdir(), "llm-bench-mcp-bridge-"));
+    roots.push(root);
+    await expect(
+      startMcpUnixBridge(
+        { request: () => Promise.resolve({}) },
+        {
+          root,
+          socketName: "../escape.sock",
+        },
+      ),
+    ).rejects.toThrow("safe basename");
+
+    const observed: unknown[] = [];
+    const bridge = await startMcpUnixBridge(
+      {
+        request: (method, params) => {
+          observed.push({ method, params });
+          return Promise.reject(new Error("runner-local failure"));
+        },
+      },
+      { root: join(root, "bridge"), socketName: "job.sock" },
+    );
+    const malformed = await socketRequest(bridge.socketPath, "not-json");
+    expect(malformed).toMatchObject({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32603 },
+    });
+    expect(JSON.stringify(malformed)).toContain("JSON");
+    await expect(socketRequest(bridge.socketPath, "null")).resolves.toEqual({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32603, message: "Invalid JSON-RPC request." },
+    });
+    for (const invalid of [
+      { jsonrpc: "1.0", id: 1, method: "tools/list" },
+      { jsonrpc: "2.0", method: "tools/list" },
+      { jsonrpc: "2.0", id: 1 },
+    ]) {
+      await expect(
+        socketRequest(bridge.socketPath, JSON.stringify(invalid)),
+      ).resolves.toMatchObject({
+        jsonrpc: "2.0",
+        error: { code: -32603, message: "Invalid JSON-RPC request." },
+      });
+    }
+    await expect(
+      socketRequest(
+        bridge.socketPath,
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 7,
+          method: "tools/call",
+        }),
+      ),
+    ).resolves.toEqual({
+      jsonrpc: "2.0",
+      id: 7,
+      error: { code: -32603, message: "runner-local failure" },
+    });
+    expect(observed).toEqual([{ method: "tools/call", params: {} }]);
+    await expect(
+      startMcpUnixBridge(
+        { request: () => Promise.resolve({}) },
+        { root: join(root, "bridge"), socketName: "job.sock" },
+      ),
+    ).rejects.toThrow();
+    await expect(
+      socketRequest(bridge.socketPath, "x".repeat(1024 * 1024 + 1)),
+    ).rejects.toThrow();
+
+    await unlink(bridge.socketPath);
+    await bridge.stop();
+    await expect(bridge.stop()).resolves.toBeUndefined();
+
+    const unlinkFailure = await startMcpUnixBridge(
+      { request: () => Promise.resolve({}) },
+      { root: join(root, "unlink-failure"), socketName: "job.sock" },
+    );
+    await unlink(unlinkFailure.socketPath);
+    await mkdir(unlinkFailure.socketPath);
+    await expect(unlinkFailure.stop()).rejects.toThrow();
   });
 
   it("does not launch a server when an explicitly requested secret is unavailable", async () => {
@@ -420,4 +745,26 @@ async function waitForFile(path: string): Promise<void> {
     }
   }
   throw new Error(`Timed out waiting for ${path}.`);
+}
+
+function socketRequest(socketPath: string, line: string): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let buffer = "";
+    let settled = false;
+    const socket = createConnection(socketPath, () =>
+      socket.write(`${line}\n`),
+    );
+    socket.on("data", (chunk: Buffer) => {
+      buffer += chunk.toString("utf8");
+      const newline = buffer.indexOf("\n");
+      if (newline < 0) return;
+      settled = true;
+      socket.end();
+      resolve(JSON.parse(buffer.slice(0, newline)) as unknown);
+    });
+    socket.on("error", reject);
+    socket.on("close", () => {
+      if (!settled) reject(new Error("Socket closed without a response."));
+    });
+  });
 }

@@ -83,6 +83,79 @@ describe("the executable plugin protocol", () => {
     });
 
     expect(result.credentials).toEqual({});
+    expect(result.runtime).toEqual({ mcpConnections: [] });
+  });
+
+  it("validates strict runner-provided MCP runtime connections", () => {
+    const request = RunRequestSchema.parse({
+      kind: "run_request",
+      protocolVersion: "1.0.0",
+      job: {
+        id: "ba0688bb-cfd1-455f-84d4-1238d18d9967",
+        attemptId: "d39ff38f-c09e-4afd-81f0-efa50e9f267d",
+      },
+      case: {
+        id: "fix-one",
+        benchmarkId: "repair",
+        benchmarkVersion: "1.0.0",
+      },
+      prompt: "Fix the test.",
+      workspace: { root: "/work" },
+      toolset: {
+        id: "repository",
+        version: "1.0.0",
+        tools: ["read_file"],
+        mcpProfiles: [
+          {
+            id: "filesystem",
+            version: "1.0.0",
+            contentHash: "a".repeat(64),
+          },
+        ],
+      },
+      limits: {
+        maxDurationMs: 60_000,
+        maxToolCalls: 100,
+        maxTokens: 10_000,
+        maxTurns: 10,
+      },
+      checkpoint: null,
+      runtime: {
+        mcpConnections: [
+          {
+            profile: {
+              id: "filesystem",
+              version: "1.0.0",
+              contentHash: "a".repeat(64),
+            },
+            transport: "unix",
+            socketPath: "/private/runner/jobs/attempt/mcp-filesystem.sock",
+          },
+        ],
+      },
+    });
+
+    expect(request.runtime.mcpConnections).toEqual([
+      {
+        profile: {
+          id: "filesystem",
+          version: "1.0.0",
+          contentHash: "a".repeat(64),
+        },
+        transport: "unix",
+        socketPath: "/private/runner/jobs/attempt/mcp-filesystem.sock",
+      },
+    ]);
+    expect(
+      RunRequestSchema.safeParse({
+        ...request,
+        runtime: {
+          mcpConnections: [
+            { ...request.runtime.mcpConnections[0], secret: "forbidden" },
+          ],
+        },
+      }).success,
+    ).toBe(false);
   });
 
   it("uses durable toolset, limit, checkpoint, and completed-result vocabulary", () => {

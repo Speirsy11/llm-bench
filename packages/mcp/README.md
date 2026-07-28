@@ -5,7 +5,9 @@ Runner-local stdio MCP lifecycle and profile storage for LLMBench.
 `McpProfileRegistry` stores the complete local profile in an owner-only file,
 computes its immutable SHA-256 identity, detects persisted configuration
 tampering, and returns sanitized metadata separately from executable arguments
-and secret references. `McpSession` launches one detached process group with a
+and secret references. Profile imports cannot predeclare secret references:
+the runner operator adds and revokes each environment grant locally, which
+updates the profile identity atomically. `McpSession` launches one detached process group with a
 minimal environment, resolves only named secrets, performs a bounded MCP
 initialize request, buffers split JSON-RPC lines correctly, and escalates
 SIGTERM to SIGKILL during cleanup.

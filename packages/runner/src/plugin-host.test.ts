@@ -80,6 +80,17 @@ describe("ExecutablePluginHarness", () => {
     const result = await harness.run(request(), {
       attemptId: ATTEMPT_ID,
       credentials: { EXAMPLE_TOKEN: "explicit-secret" },
+      mcpConnections: [
+        {
+          profile: {
+            id: "filesystem",
+            version: "1.0.0",
+            contentHash: "a".repeat(64),
+          },
+          transport: "unix",
+          socketPath: "/private/job/mcp/filesystem.sock",
+        },
+      ],
     });
 
     expect(result).toEqual({
@@ -113,6 +124,19 @@ describe("ExecutablePluginHarness", () => {
       job: { id: JOB_ID, attemptId: ATTEMPT_ID },
       credentials: { EXAMPLE_TOKEN: "explicit-secret" },
       toolset: request().toolset,
+      runtime: {
+        mcpConnections: [
+          {
+            profile: {
+              id: "filesystem",
+              version: "1.0.0",
+              contentHash: "a".repeat(64),
+            },
+            transport: "unix",
+            socketPath: "/private/job/mcp/filesystem.sock",
+          },
+        ],
+      },
     });
   });
 
@@ -142,7 +166,10 @@ describe("ExecutablePluginHarness", () => {
     ).run(request(), { attemptId: ATTEMPT_ID });
 
     expect(runner.request?.env).toEqual({});
-    expect(runner.inputMessages()[1]).toMatchObject({ credentials: {} });
+    expect(runner.inputMessages()[1]).toMatchObject({
+      credentials: {},
+      runtime: { mcpConnections: [] },
+    });
     expect(result).toMatchObject({
       status: "failed",
       error: "credential denied",

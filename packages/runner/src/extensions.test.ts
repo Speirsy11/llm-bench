@@ -1,7 +1,7 @@
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { RunnerExtensionManager } from "./extensions";
 
@@ -9,6 +9,7 @@ describe("RunnerExtensionManager", () => {
   const roots: string[] = [];
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await Promise.all(
       roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
     );
@@ -34,7 +35,7 @@ describe("RunnerExtensionManager", () => {
         },
         local: {
           argv: ["/opt/mcp"],
-          secretReferences: { MCP_TOKEN: "MCP_RUNNER_TOKEN" },
+          secretReferences: {},
         },
       }),
     );
@@ -71,7 +72,7 @@ describe("RunnerExtensionManager", () => {
       },
     });
 
-    await manager.plugin.add([executable]);
+    await manager.plugin.add(executable);
     await expect(manager.plugin.probe([executable])).resolves.toMatchObject({
       manifest: { id: "fixture-plugin" },
     });
@@ -83,6 +84,7 @@ describe("RunnerExtensionManager", () => {
     await manager.plugin.revoke("fixture-plugin", "PLUGIN_TOKEN");
     await expect(manager.plugin.list()).resolves.toHaveLength(1);
     await manager.mcp.add(profilePath);
+    await manager.mcp.grant("filesystem", "MCP_TOKEN", "MCP_RUNNER_TOKEN");
     await expect(manager.mcp.list()).resolves.toHaveLength(1);
     const inventory = await manager.inventory();
     expect(inventory).toMatchObject({
@@ -146,9 +148,7 @@ createInterface({ input: process.stdin }).once("line", (line) => {
         },
         local: {
           argv: [process.execPath, server],
-          secretReferences: {
-            MCP_TOKEN: "PATH",
-          },
+          secretReferences: {},
         },
       }),
     );
@@ -158,9 +158,12 @@ createInterface({ input: process.stdin }).once("line", (line) => {
       manifest: { id: "real-plugin" },
     });
     await manager.mcp.add(profilePath);
+    vi.stubEnv("LLMBENCH_TEST_MCP_TOKEN", "runner-local-secret");
+    await manager.mcp.grant("real-mcp", "MCP_TOKEN", "LLMBENCH_TEST_MCP_TOKEN");
     await expect(manager.mcp.probe("real-mcp")).resolves.toEqual({
       capabilities: { tools: {} },
       protocolVersion: undefined,
     });
+    await manager.mcp.revoke("real-mcp", "MCP_TOKEN");
   });
 });

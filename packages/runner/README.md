@@ -59,7 +59,8 @@ llm-bench-runner plugin revoke example-harness-plugin API_TOKEN
 llm-bench-runner plugin remove example-harness-plugin
 ```
 
-`add` resolves the real executable path, requires an executable regular file,
+`add` accepts exactly one self-contained executable artifact (no interpreter or
+script arguments), resolves its real path, requires an executable regular file,
 performs a credential-free protocol handshake, and records its SHA-256 identity
 and sanitized manifest. The executable is re-hashed before every job. Grant
 commands map a plugin request name to one exact environment-variable name; they
@@ -90,31 +91,35 @@ computes a stable hash from the complete profile:
   },
   "local": {
     "argv": ["/absolute/path/to/mcp-server", "--stdio"],
-    "secretReferences": {
-      "MCP_TOKEN": "RUNNER_MCP_TOKEN"
-    }
+    "secretReferences": {}
   }
 }
 ```
 
 ```bash
 llm-bench-runner mcp add ./filesystem-profile.json
+llm-bench-runner mcp grant filesystem MCP_TOKEN RUNNER_MCP_TOKEN
 llm-bench-runner mcp list
 llm-bench-runner mcp probe filesystem
 llm-bench-runner mcp capabilities filesystem
 llm-bench-runner mcp start filesystem
 llm-bench-runner mcp stop filesystem
+llm-bench-runner mcp revoke filesystem MCP_TOKEN
 llm-bench-runner mcp remove filesystem
 ```
 
-Profiles are stdio-only. Secret references name individual runner environment
-variables and are resolved only for that profile. `HOME`, `CODEX_HOME`, process
-launch variables, provider credentials, executable arguments, and secret
-references are never advertised to the control plane. `probe`,
+Profiles are stdio-only. Imported JSON must have an empty `secretReferences`
+object. Grant each server environment name to a runner environment variable
+locally with `mcp grant`; only then may that profile resolve it from the runner
+environment. `HOME`, `CODEX_HOME`, process launch variables, provider
+credentials, executable arguments, and secret references are never advertised
+to the control plane. `probe`,
 `capabilities`, and `start` are bounded start/probe/stop operations; MCP
 processes are otherwise job-owned and always stopped after completion,
 failure, cancellation, or partial startup. There is no untracked persistent MCP
-daemon for a later CLI process to inherit.
+daemon for a later CLI process to inherit. A selected plugin receives only a
+job-scoped owner-only Unix socket descriptor; the runner bridges JSON-RPC to the
+initialized stdio server and removes the socket when the job ends.
 
 Stop the runner before changing extensions and restart it afterwards so its
 pairing/heartbeat inventory is a stable snapshot for leased jobs.

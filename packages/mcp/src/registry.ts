@@ -37,6 +37,7 @@ export class McpProfileRegistry {
   async add(profile: McpProfileInput): Promise<void> {
     await this.#mutate(async () => {
       const normalized = withContentHash(profile);
+      assertNoImportedSecretReferences(normalized);
       const profiles = await this.#read();
       if (
         profiles.some(({ metadata }) => metadata.id === normalized.metadata.id)
@@ -58,6 +59,40 @@ export class McpProfileRegistry {
         throw new Error(`MCP profile '${id}' is not installed.`);
       }
       await this.#write(retained);
+    });
+  }
+
+  async grant(
+    id: string,
+    serverEnvironmentName: string,
+    runnerEnvironmentName: string,
+  ): Promise<void> {
+    await this.#mutate(async () => {
+      assertServerEnvironmentName(serverEnvironmentName);
+      assertRunnerEnvironmentName(runnerEnvironmentName);
+      const profiles = await this.#read();
+      const profile = profiles.find(({ metadata }) => metadata.id === id);
+      if (profile === undefined) {
+        throw new Error(`MCP profile '${id}' is not installed.`);
+      }
+      profile.local.secretReferences[serverEnvironmentName] =
+        runnerEnvironmentName;
+      profile.metadata.contentHash = mcpProfileContentHash(profile);
+      await this.#write(profiles);
+    });
+  }
+
+  async revoke(id: string, serverEnvironmentName: string): Promise<void> {
+    await this.#mutate(async () => {
+      assertServerEnvironmentName(serverEnvironmentName);
+      const profiles = await this.#read();
+      const profile = profiles.find(({ metadata }) => metadata.id === id);
+      if (profile === undefined) {
+        throw new Error(`MCP profile '${id}' is not installed.`);
+      }
+      delete profile.local.secretReferences[serverEnvironmentName];
+      profile.metadata.contentHash = mcpProfileContentHash(profile);
+      await this.#write(profiles);
     });
   }
 
@@ -169,6 +204,26 @@ function withContentHash(profile: McpProfileInput): McpProfile {
   validateProfile(normalized as unknown as Record<string, unknown>);
   normalized.metadata.contentHash = mcpProfileContentHash(normalized);
   return normalized;
+}
+
+function assertNoImportedSecretReferences(profile: McpProfileInput): void {
+  if (Object.keys(profile.local.secretReferences).length > 0) {
+    throw new Error(
+      "MCP profile imports must not declare secret references. Use an explicit local grant.",
+    );
+  }
+}
+
+function assertServerEnvironmentName(value: string): void {
+  if (!ENVIRONMENT_KEY.test(value) || RESERVED_ENVIRONMENT_KEYS.has(value)) {
+    throw new Error("MCP secret grant names are invalid.");
+  }
+}
+
+function assertRunnerEnvironmentName(value: string): void {
+  if (!ENVIRONMENT_KEY.test(value)) {
+    throw new Error("MCP secret grant names are invalid.");
+  }
 }
 
 function validateProfile(

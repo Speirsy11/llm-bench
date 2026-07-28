@@ -76,6 +76,7 @@ try {
       "  limits: { maxDurationMs: 60_000, maxToolCalls: 100, maxTokens: 10_000, maxTurns: 10 },",
       "  checkpoint: null,",
       "  credentials: {},",
+      "  runtime: { mcpConnections: [] },",
       "};",
       "",
       "void request;",

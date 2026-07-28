@@ -20,7 +20,7 @@ export interface CapabilityProbe {
 export interface RunnerExtensionOperations {
   inventory(): Promise<RunnerInventory>;
   plugin: {
-    add(argv: [string, ...string[]]): Promise<unknown>;
+    add(executable: string): Promise<unknown>;
     remove(id: string): Promise<void>;
     list(): Promise<unknown>;
     probe(argv: [string, ...string[]]): Promise<unknown>;
@@ -33,6 +33,8 @@ export interface RunnerExtensionOperations {
     list(): Promise<unknown>;
     probe(id: string): Promise<unknown>;
     stop(id: string): Promise<void>;
+    grant(id: string, serverName: string, runnerName: string): Promise<void>;
+    revoke(id: string, serverName: string): Promise<void>;
   };
 }
 
@@ -244,14 +246,25 @@ export class RunnerCli {
       this.options.output(JSON.stringify(await extensions.plugin.list()));
       return;
     }
-    if (command === "add" || command === "probe") {
+    if (command === "add") {
+      const [executable, ...argv] = rest;
+      if (!executable || argv.length > 0) {
+        throw new Error(
+          "Usage: llm-bench-runner plugin add <self-contained-executable>",
+        );
+      }
+      const result = await extensions.plugin.add(executable);
+      this.options.output(JSON.stringify(result));
+      return;
+    }
+    if (command === "probe") {
       const [executable, ...argv] = rest;
       if (!executable) {
         throw new Error(
-          `Usage: llm-bench-runner plugin ${command} <executable> [arguments...]`,
+          "Usage: llm-bench-runner plugin probe <executable> [arguments...]",
         );
       }
-      const result = await extensions.plugin[command]([executable, ...argv]);
+      const result = await extensions.plugin.probe([executable, ...argv]);
       this.options.output(JSON.stringify(result));
       return;
     }
@@ -307,6 +320,28 @@ export class RunnerCli {
       if (!id) throw new Error("Usage: llm-bench-runner mcp remove <id>");
       await extensions.mcp.remove(id);
       this.options.output(`MCP profile ${id} removed.`);
+      return;
+    }
+    if (command === "grant") {
+      const [id, serverName, runnerName] = rest;
+      if (!id || !serverName || !runnerName) {
+        throw new Error(
+          "Usage: llm-bench-runner mcp grant <id> <server-name> <runner-env-name>",
+        );
+      }
+      await extensions.mcp.grant(id, serverName, runnerName);
+      this.options.output(`MCP profile ${id} grant ${serverName} saved.`);
+      return;
+    }
+    if (command === "revoke") {
+      const [id, serverName] = rest;
+      if (!id || !serverName) {
+        throw new Error(
+          "Usage: llm-bench-runner mcp revoke <id> <server-name>",
+        );
+      }
+      await extensions.mcp.revoke(id, serverName);
+      this.options.output(`MCP profile ${id} grant ${serverName} revoked.`);
       return;
     }
     if (

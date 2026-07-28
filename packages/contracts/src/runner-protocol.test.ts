@@ -14,7 +14,7 @@ const runnerPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 const inventory = {
   plugins: [
     {
-      protocolVersion: "1.0",
+      protocolVersion: "1.0.0",
       contentHash: "c".repeat(64),
       manifest: {
         id: "example-repair",
@@ -144,6 +144,20 @@ describe("runner protocol", () => {
             {
               ...inventory.mcpProfiles[0],
               executable: "/private/bin/mcp-server",
+            },
+          ],
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      RunnerPairingStartRequestSchema.parse({
+        ...input,
+        inventory: {
+          ...inventory,
+          plugins: [
+            {
+              ...inventory.plugins[0],
+              protocolVersion: "not-semantic",
             },
           ],
         },

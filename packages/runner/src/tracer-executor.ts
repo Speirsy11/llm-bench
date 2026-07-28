@@ -1,6 +1,8 @@
+import { createHash } from "node:crypto";
 import { chmod, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import type { PluginMcpConnection } from "@speirsy11/llm-bench-harness-sdk";
 
 import type {
   AdapterRunRequest,
@@ -8,15 +10,18 @@ import type {
   Checkpoint,
   PluginExecutionRef,
   RunnerCheckpoint,
+  RunnerInventory,
   RunnerLease,
 } from "@llm-bench/contracts";
-import type { RunnerInventory } from "@llm-bench/contracts";
 import type { RunnerIdentity } from "@llm-bench/crypto";
 import type { HarnessProvider } from "@llm-bench/llm-bench-harness";
 import type {
   McpProfile,
   McpProfileRegistry,
+  McpRequestSession,
   SecretResolver as McpSecretResolver,
+  McpUnixBridge,
+  McpUnixBridgeOptions,
 } from "@llm-bench/mcp";
 import type { FetchLike } from "@llm-bench/openai-compatible";
 import type { ProcessRunner } from "@llm-bench/process-harness";
@@ -34,7 +39,7 @@ import {
   CredentialResolver,
   LlmBenchHarness,
 } from "@llm-bench/llm-bench-harness";
-import { startMcpSession } from "@llm-bench/mcp";
+import { startMcpSession, startMcpUnixBridge } from "@llm-bench/mcp";
 import { OpenRouterProvider } from "@llm-bench/openai-compatible";
 import { PiHarness } from "@llm-bench/pi-harness";
 import { repairFixture, repairScenario } from "@llm-bench/repository-repair";
@@ -68,12 +73,23 @@ export interface TracerExecutorOptions {
     resolveSecret: McpSecretResolver,
     options: { signal: AbortSignal },
   ) => Promise<McpSessionHandle>;
+  startMcpBridge?: (
+    session: McpRequestSession,
+    options: McpUnixBridgeOptions,
+  ) => Promise<McpUnixBridge>;
   deadline?: AbortSignal;
 }
 
-interface McpSessionHandle {
+interface McpSessionHandle extends McpRequestSession {
   probe(signal?: AbortSignal): Promise<unknown>;
   stop(): Promise<void>;
+}
+
+interface McpAwareFixtureHarness extends FixtureHarness {
+  repairWithMcp(
+    request: Parameters<FixtureHarness["repair"]>[0],
+    connections: readonly PluginMcpConnection[],
+  ): ReturnType<FixtureHarness["repair"]>;
 }
 
 /** Executes versioned repository-repair leases through their selected target. */
@@ -206,7 +222,7 @@ export class TracerExecutor implements RunnerExecutor {
     lease: RunnerLease,
     context: Parameters<RunnerExecutor["execute"]>[1],
     selected: PluginExecutionRef,
-  ): Promise<FixtureHarness> {
+  ): Promise<McpAwareFixtureHarness> {
     const registry = this.options.pluginRegistry;
     if (registry === undefined) {
       throw new Error("Runner plugin registry is unavailable.");
@@ -242,27 +258,31 @@ export class TracerExecutor implements RunnerExecutor {
       },
       { runner: this.options.pluginProcessRunner },
     );
-    return {
-      repair: async ({ workspace, signal }) => {
-        const result = await plugin.run(
-          adapterRequest(lease, { ...context, signal }, workspace.root),
-          { attemptId: lease.attemptId, credentials },
+    const repairWithMcp: McpAwareFixtureHarness["repairWithMcp"] = async (
+      { workspace, signal },
+      mcpConnections,
+    ) => {
+      const result = await plugin.run(
+        adapterRequest(lease, { ...context, signal }, workspace.root),
+        { attemptId: lease.attemptId, credentials, mcpConnections },
+      );
+      if (
+        result.checkpoint !== null &&
+        !isDeepStrictEqual(result.checkpoint, context.checkpoint)
+      ) {
+        const { jobId: _jobId, ...checkpoint } = result.checkpoint;
+        await context.saveCheckpoint(checkpoint);
+      }
+      if (result.status !== "completed") {
+        throw new Error(
+          result.error ?? `Plugin ${lease.execution.target.harness.id} failed.`,
         );
-        if (
-          result.checkpoint !== null &&
-          !isDeepStrictEqual(result.checkpoint, context.checkpoint)
-        ) {
-          const { jobId: _jobId, ...checkpoint } = result.checkpoint;
-          await context.saveCheckpoint(checkpoint);
-        }
-        if (result.status !== "completed") {
-          throw new Error(
-            result.error ??
-              `Plugin ${lease.execution.target.harness.id} failed.`,
-          );
-        }
-        return { trajectory: [result.output] };
-      },
+      }
+      return { trajectory: [result.output] };
+    };
+    return {
+      repair: (request) => repairWithMcp(request, []),
+      repairWithMcp,
     };
   }
 
@@ -272,6 +292,11 @@ export class TracerExecutor implements RunnerExecutor {
   ): FixtureHarness {
     const selected = lease.execution.target.toolset.mcpProfiles;
     if (selected.length === 0) return harness;
+    if (!isMcpAwareHarness(harness)) {
+      throw new Error(
+        `Harness ${lease.execution.target.harness.id} cannot consume runner-managed MCP connections.`,
+      );
+    }
     return {
       repair: async (request) => {
         const registry = this.options.mcpRegistry;
@@ -279,8 +304,10 @@ export class TracerExecutor implements RunnerExecutor {
           throw new Error("Runner MCP profile registry is unavailable.");
         }
         const sessions: McpSessionHandle[] = [];
+        const bridges: McpUnixBridge[] = [];
+        const connections: PluginMcpConnection[] = [];
         try {
-          for (const reference of selected) {
+          for (const [index, reference] of selected.entries()) {
             const profile = await registry.get(reference.id);
             if (
               profile.metadata.version !== reference.version ||
@@ -298,9 +325,26 @@ export class TracerExecutor implements RunnerExecutor {
             );
             sessions.push(session);
             await session.probe(request.signal);
+            const bridge = await (
+              this.options.startMcpBridge ?? startMcpUnixBridge
+            )(session, {
+              root: mcpBridgeRoot(this.root, lease.attemptId),
+              socketName: `${String(index)}.sock`,
+            });
+            bridges.push(bridge);
+            connections.push({
+              profile: {
+                id: reference.id,
+                version: reference.version,
+                contentHash: reference.contentHash,
+              },
+              transport: "unix",
+              socketPath: bridge.socketPath,
+            });
           }
-          return await harness.repair(request);
+          return await harness.repairWithMcp(request, connections);
         } finally {
+          await Promise.allSettled(bridges.map((bridge) => bridge.stop()));
           await Promise.allSettled(sessions.map((session) => session.stop()));
         }
       },
@@ -371,6 +415,22 @@ export class TracerExecutor implements RunnerExecutor {
       },
     };
   }
+}
+
+function isMcpAwareHarness(
+  harness: FixtureHarness,
+): harness is McpAwareFixtureHarness {
+  return (
+    "repairWithMcp" in harness && typeof harness.repairWithMcp === "function"
+  );
+}
+
+function mcpBridgeRoot(root: string, attemptId: string): string {
+  const jobKey = createHash("sha256")
+    .update(attemptId)
+    .digest("hex")
+    .slice(0, 16);
+  return join(root, "mcp", jobKey);
 }
 
 function assertOpenRouterCredential(value: string): void {

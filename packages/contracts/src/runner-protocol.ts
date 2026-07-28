@@ -25,7 +25,7 @@ export const PluginExecutionRefSchema = z.strictObject({
 export const RunnerInventorySchema = z.strictObject({
   plugins: z.array(
     z.strictObject({
-      protocolVersion: z.string().min(1),
+      protocolVersion: SemanticVersionSchema,
       contentHash: ContentHashSchema,
       manifest: HarnessManifestSchema,
     }),

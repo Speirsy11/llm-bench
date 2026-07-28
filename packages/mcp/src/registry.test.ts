@@ -16,7 +16,7 @@ describe("McpProfileRegistry", () => {
     );
   });
 
-  it("persists sanitized metadata separately from runner-local executable and secret references", async () => {
+  it("requires a separate local grant before associating a runner environment secret", async () => {
     const root = await mkdtemp(join(tmpdir(), "llm-bench-mcp-"));
     roots.push(root);
     const registry = new McpProfileRegistry(root);
@@ -35,17 +35,20 @@ describe("McpProfileRegistry", () => {
       local: {
         argv: [process.execPath, "server.mjs"] as [string, string],
         cwd: "/opt/mcp",
-        secretReferences: { GITHUB_TOKEN: "keychain:github" },
+        secretReferences: {},
       },
     };
     await registry.add(profile);
+    const beforeGrant = (await registry.list())[0]?.contentHash;
+    await registry.grant("filesystem", "GITHUB_TOKEN", "RUNNER_GITHUB_TOKEN");
 
-    await expect(registry.list()).resolves.toEqual([
+    const listed = await registry.list();
+    expect(listed[0]?.contentHash).toMatch(/^[a-f0-9]{64}$/u);
+    expect(listed).toMatchObject([
       {
         protocolVersion: "1",
         id: "filesystem",
         version: "1.2.3",
-        contentHash: mcpProfileContentHash(profile),
         label: "Filesystem",
         description: "Local filesystem tools",
         capabilities: ["tools"],
@@ -53,12 +56,71 @@ describe("McpProfileRegistry", () => {
       },
     ]);
     await expect(registry.get("filesystem")).resolves.toMatchObject({
-      local: { secretReferences: { GITHUB_TOKEN: "keychain:github" } },
+      local: { secretReferences: { GITHUB_TOKEN: "RUNNER_GITHUB_TOKEN" } },
     });
+    expect((await registry.list())[0]?.contentHash).not.toBe(beforeGrant);
 
     const path = join(root, "mcp-profiles.json");
-    await expect(readFile(path, "utf8")).resolves.toContain("keychain:github");
+    await expect(readFile(path, "utf8")).resolves.toContain(
+      "RUNNER_GITHUB_TOKEN",
+    );
     expect((await stat(path)).mode & 0o777).toBe(0o600);
+    const stored = JSON.parse(await readFile(path, "utf8")) as [
+      { local: { secretReferences: Record<string, string> } },
+    ];
+    stored[0].local.secretReferences.GITHUB_TOKEN = "TAMPERED_TOKEN";
+    await writeFile(path, JSON.stringify(stored));
+    await expect(registry.list()).rejects.toThrow("registry is invalid");
+  });
+
+  it("rejects imported secret references and validates serialized grant mutations", async () => {
+    const root = await mkdtemp(join(tmpdir(), "llm-bench-mcp-"));
+    roots.push(root);
+    const registry = new McpProfileRegistry(root);
+    const profile = {
+      metadata: {
+        protocolVersion: "1" as const,
+        id: "fixture",
+        version: "1.0.0",
+        contentHash: CONTENT_HASH,
+        label: "Fixture",
+        capabilities: [],
+        tools: [],
+      },
+      local: { argv: [process.execPath] as [string], secretReferences: {} },
+    };
+
+    await expect(
+      registry.add({
+        ...profile,
+        local: { ...profile.local, secretReferences: { MCP_TOKEN: "TOKEN" } },
+      }),
+    ).rejects.toThrow("secret references");
+    await registry.add(profile);
+    await expect(
+      registry.grant("fixture", "lower", "RUNNER_TOKEN"),
+    ).rejects.toThrow("invalid");
+    await expect(
+      registry.grant("fixture", "MCP_TOKEN", "lower"),
+    ).rejects.toThrow("invalid");
+    await expect(
+      registry.grant("fixture", "HOME", "RUNNER_TOKEN"),
+    ).rejects.toThrow("invalid");
+    await expect(
+      registry.grant("missing", "MCP_TOKEN", "RUNNER_TOKEN"),
+    ).rejects.toThrow("not installed");
+    await expect(registry.revoke("missing", "MCP_TOKEN")).rejects.toThrow(
+      "not installed",
+    );
+    await Promise.all([
+      registry.grant("fixture", "MCP_TOKEN", "RUNNER_TOKEN"),
+      registry.grant("fixture", "SECOND_TOKEN", "RUNNER_SECOND_TOKEN"),
+    ]);
+    await registry.revoke("fixture", "MCP_TOKEN");
+
+    await expect(registry.get("fixture")).resolves.toMatchObject({
+      local: { secretReferences: { SECOND_TOKEN: "RUNNER_SECOND_TOKEN" } },
+    });
   });
 
   it("rejects duplicate ids and malformed versions without replacing the installed profile", async () => {

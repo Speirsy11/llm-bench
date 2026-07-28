@@ -31,7 +31,7 @@ export interface PluginRegistryOptions {
 }
 
 export interface PluginInstallRequest {
-  argv: [string, ...string[]];
+  executable: string;
   credentialGrants?: Record<string, string>;
 }
 
@@ -48,7 +48,7 @@ export interface PluginExecution extends PluginInventoryEntry {
 
 interface StoredPlugin extends PluginInventoryEntry {
   local: {
-    argv: [string, ...string[]];
+    executable: string;
     credentialGrants: Record<string, string>;
   };
 }
@@ -71,12 +71,13 @@ export class PluginRegistry {
 
   async install(request: PluginInstallRequest): Promise<PluginInventoryEntry> {
     return this.#mutate(async () => {
-      const executable = await verifiedExecutable(request.argv[0]);
-      const argv: [string, ...string[]] = [
-        executable,
-        ...request.argv.slice(1),
-      ];
-      const probe = await this.options.probe(argv);
+      if (typeof request.executable !== "string" || "argv" in request) {
+        throw new Error(
+          "Plugin installation requires one self-contained executable artifact.",
+        );
+      }
+      const executable = await verifiedExecutable(request.executable);
+      const probe = await this.options.probe([executable]);
       assertProtocolVersion(probe.protocolVersion);
       const manifest = coreManifest(probe.manifest);
       const credentialGrants = grants(request.credentialGrants ?? {});
@@ -91,7 +92,7 @@ export class PluginRegistry {
       };
       stored.push({
         ...inventory,
-        local: { argv, credentialGrants },
+        local: { executable, credentialGrants },
       });
       await this.#write(stored);
       return cloneInventory(inventory);
@@ -144,7 +145,7 @@ export class PluginRegistry {
       (entry) => entry.manifest.id === id,
     );
     if (plugin === undefined) throw missingPlugin(id);
-    const executable = await verifiedExecutable(plugin.local.argv[0]);
+    const executable = await verifiedExecutable(plugin.local.executable);
     const actualContentHash = await contentHash(executable);
     if (actualContentHash !== plugin.contentHash) {
       throw new Error(
@@ -153,7 +154,7 @@ export class PluginRegistry {
     }
     return {
       ...cloneInventory(plugin),
-      argv: [executable, ...plugin.local.argv.slice(1)],
+      argv: [executable],
       credentialGrants: structuredClone(plugin.local.credentialGrants),
     };
   }
@@ -263,9 +264,9 @@ function parseStoredPlugin(value: unknown): StoredPlugin {
     typeof candidate.contentHash !== "string" ||
     !/^[a-f0-9]{64}$/u.test(candidate.contentHash) ||
     !isRecord(local) ||
-    !Array.isArray(local.argv) ||
-    local.argv.length === 0 ||
-    local.argv.some((argument) => typeof argument !== "string") ||
+    typeof local.executable !== "string" ||
+    local.executable.length === 0 ||
+    "argv" in local ||
     !isRecord(local.credentialGrants) ||
     Object.values(local.credentialGrants).some(
       (runnerName) => typeof runnerName !== "string",
@@ -281,14 +282,12 @@ function parseStoredPlugin(value: unknown): StoredPlugin {
       string
     >,
   );
-  const argv = local.argv as string[];
-  const [command = ""] = argv;
   return {
     protocolVersion: candidate.protocolVersion,
     contentHash: candidate.contentHash,
     manifest,
     local: {
-      argv: [command, ...argv.slice(1)],
+      executable: local.executable,
       credentialGrants,
     },
   };

@@ -84,6 +84,22 @@ export const PluginToolsetSchema = z.strictObject({
     .max(128),
 });
 
+export const PluginMcpConnectionSchema = z.strictObject({
+  profile: z.strictObject({
+    id: IdentifierSchema,
+    version: ProtocolVersionSchema,
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  }),
+  transport: z.literal("unix"),
+  socketPath: z.string().startsWith("/").max(4_096),
+});
+
+export const PluginRuntimeSchema = z
+  .strictObject({
+    mcpConnections: z.array(PluginMcpConnectionSchema).max(128),
+  })
+  .default({ mcpConnections: [] });
+
 export const PluginLimitsSchema = z.strictObject({
   maxDurationMs: z.number().int().positive(),
   maxToolCalls: z.number().int().nonnegative(),
@@ -111,6 +127,7 @@ export const RunRequestSchema = z.strictObject({
   limits: PluginLimitsSchema,
   checkpoint: PluginCheckpointSchema.nullable(),
   credentials: PluginCredentialsSchema,
+  runtime: PluginRuntimeSchema,
 });
 
 export const PluginEventSchema = z.discriminatedUnion("type", [
@@ -179,7 +196,9 @@ export type PluginCheckpoint = z.infer<typeof PluginCheckpointSchema>;
 export type PluginCredentials = z.output<typeof PluginCredentialsSchema>;
 export type PluginLimits = z.infer<typeof PluginLimitsSchema>;
 export type PluginManifest = z.infer<typeof PluginManifestSchema>;
+export type PluginMcpConnection = z.infer<typeof PluginMcpConnectionSchema>;
 export type PluginMessage = z.infer<typeof PluginMessageSchema>;
+export type PluginRuntime = z.output<typeof PluginRuntimeSchema>;
 export type PluginToolset = z.infer<typeof PluginToolsetSchema>;
 export type RunEvent = z.infer<typeof RunEventSchema>;
 export type RunRequest = z.output<typeof RunRequestSchema>;

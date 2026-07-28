@@ -271,7 +271,7 @@ describe("RunnerCli", () => {
       extensions,
     );
 
-    await cli.run(["plugin", "add", "/plugin", "--jsonl"]);
+    await cli.run(["plugin", "add", "/plugin"]);
     await cli.run(["plugin", "probe", "/plugin"]);
     await cli.run(["plugin", "list"]);
     await cli.run(["plugin", "grant", "fixture", "TOKEN", "RUNNER_TOKEN"]);
@@ -279,6 +279,14 @@ describe("RunnerCli", () => {
     await cli.run(["plugin", "remove", "fixture"]);
     await cli.run(["mcp", "add", "/profiles/filesystem.json"]);
     await cli.run(["mcp", "list"]);
+    await cli.run([
+      "mcp",
+      "grant",
+      "filesystem",
+      "MCP_TOKEN",
+      "RUNNER_MCP_TOKEN",
+    ]);
+    await cli.run(["mcp", "revoke", "filesystem", "MCP_TOKEN"]);
     await cli.run(["mcp", "probe", "filesystem"]);
     await cli.run(["mcp", "start", "filesystem"]);
     await cli.run(["mcp", "capabilities", "filesystem"]);
@@ -287,7 +295,7 @@ describe("RunnerCli", () => {
     await cli.run(["capabilities"]);
 
     expect(calls).toEqual([
-      "plugin:add:/plugin,--jsonl",
+      "plugin:add:/plugin",
       "plugin:probe:/plugin",
       "plugin:list",
       "plugin:grant:fixture:TOKEN:RUNNER_TOKEN",
@@ -295,6 +303,8 @@ describe("RunnerCli", () => {
       "plugin:remove:fixture",
       "mcp:add:/profiles/filesystem.json",
       "mcp:list",
+      "mcp:grant:filesystem:MCP_TOKEN:RUNNER_MCP_TOKEN",
+      "mcp:revoke:filesystem:MCP_TOKEN",
       "mcp:probe:filesystem",
       "mcp:probe:filesystem",
       "mcp:probe:filesystem",
@@ -316,6 +326,7 @@ describe("RunnerCli", () => {
     for (const arguments_ of [
       ["plugin"],
       ["plugin", "add"],
+      ["plugin", "add", "/plugin", "--not-allowed"],
       ["plugin", "probe"],
       ["plugin", "remove"],
       ["plugin", "grant"],
@@ -323,6 +334,8 @@ describe("RunnerCli", () => {
       ["mcp"],
       ["mcp", "add"],
       ["mcp", "remove"],
+      ["mcp", "grant"],
+      ["mcp", "revoke"],
       ["mcp", "probe"],
       ["mcp", "start"],
       ["mcp", "capabilities"],
@@ -386,8 +399,8 @@ function extensionFixture(calls: string[]): RunnerExtensionOperations {
   return {
     inventory: () => Promise.resolve({ plugins: [], mcpProfiles: [] }),
     plugin: {
-      add: (argv) => {
-        calls.push(`plugin:add:${argv.join(",")}`);
+      add: (executable) => {
+        calls.push(`plugin:add:${executable}`);
         return Promise.resolve({ id: "fixture" });
       },
       probe: (argv) => {
@@ -419,6 +432,14 @@ function extensionFixture(calls: string[]): RunnerExtensionOperations {
       list: () => {
         calls.push("mcp:list");
         return Promise.resolve([{ id: "filesystem" }]);
+      },
+      grant: (id, serverName, runnerName) => {
+        calls.push(`mcp:grant:${id}:${serverName}:${runnerName}`);
+        return Promise.resolve();
+      },
+      revoke: (id, serverName) => {
+        calls.push(`mcp:revoke:${id}:${serverName}`);
+        return Promise.resolve();
       },
       probe: (id) => {
         calls.push(`mcp:probe:${id}`);

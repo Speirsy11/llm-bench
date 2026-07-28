@@ -20,6 +20,12 @@ completed result carries output, nullable numeric metric observations, a
 checkpoint, and metadata; failed and cancelled results only report their
 honest terminal information.
 
+For each selected MCP profile, `runtime.mcpConnections` supplies its immutable
+identity and an absolute runner-owned Unix socket path. Plugins send newline-
+delimited JSON-RPC requests to that socket. The descriptor contains no MCP
+command, arguments, environment, or secret reference, and it is valid only for
+the current job.
+
 Every message is one UTF-8 JSON line of at most 1 MiB. Use the helpers rather
 than parsing unbounded stdin yourself:
 
