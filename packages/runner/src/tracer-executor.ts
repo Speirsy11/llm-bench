@@ -77,6 +77,7 @@ export interface TracerExecutorOptions {
     session: McpRequestSession,
     options: McpUnixBridgeOptions,
   ) => Promise<McpUnixBridge>;
+  removeMcpBridgeRoot?: (path: string) => Promise<void>;
   deadline?: AbortSignal;
 }
 
@@ -309,7 +310,7 @@ export class TracerExecutor implements RunnerExecutor {
         const bridgeRoot = mcpBridgeRoot(this.root, lease.attemptId);
         let primaryError: unknown;
         let executionFailed = false;
-        let outcome: Awaited<ReturnType<FixtureHarness["repair"]>> | undefined;
+        let outcome!: Awaited<ReturnType<FixtureHarness["repair"]>>;
         try {
           for (const [index, reference] of selected.entries()) {
             const profile = await registry.get(reference.id);
@@ -367,7 +368,10 @@ export class TracerExecutor implements RunnerExecutor {
           }
         }
         try {
-          await rm(bridgeRoot, { recursive: true, force: true });
+          await (
+            this.options.removeMcpBridgeRoot ??
+            ((path) => rm(path, { recursive: true, force: true }))
+          )(bridgeRoot);
         } catch (error) {
           cleanupErrors.push(error);
         }
@@ -388,9 +392,6 @@ export class TracerExecutor implements RunnerExecutor {
           }
         }
         if (executionFailed) throw primaryError;
-        if (outcome === undefined) {
-          throw new Error("MCP execution did not produce an outcome.");
-        }
         return outcome;
       },
     };

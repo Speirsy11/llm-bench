@@ -38,6 +38,10 @@ import { TracerExecutor } from "./tracer-executor";
 const RUNNER_ID = "70b70847-ec1c-4aeb-ac0f-bf7db0328efe";
 const OTHER_RUNNER_ID = "f4a6453c-cdd4-405b-9733-39af0f6d829e";
 
+function nonErrorFailure(message: string): Error {
+  return message as unknown as Error;
+}
+
 function firstPlugin(
   inventory: RunnerInventory,
 ): RunnerInventory["plugins"][number] {
@@ -459,6 +463,67 @@ describe("TracerExecutor", () => {
       ).rejects.toThrow();
     },
   );
+
+  it("preserves a non-Error MCP failure when bridge-root cleanup also fails", async () => {
+    const root = await temporaryRoot();
+    const lease = pluginLease();
+    lease.execution.target.harness.capabilities.push("mcp");
+    const reference = {
+      id: "cleanup",
+      version: "1.0.0",
+      contentHash: "9".repeat(64),
+    };
+    lease.execution.target.toolset.mcpProfiles = [reference];
+    const inventory = pluginInventory(lease, [{ ...reference, tools: [] }]);
+    const events: BenchmarkEvent[] = [];
+
+    const result = await new TracerExecutor(root, {
+      inventory,
+      pluginProcessRunner: new PluginProcessRunner("completed", { mcp: true }),
+      pluginRegistry: {
+        resolveExecution: () =>
+          Promise.resolve({
+            ...firstPlugin(inventory),
+            argv: ["/plugin"],
+            credentialGrants: {},
+          }),
+      },
+      mcpRegistry: {
+        get: () =>
+          Promise.resolve({
+            metadata: {
+              protocolVersion: "1",
+              ...reference,
+              label: "Cleanup",
+              capabilities: [],
+              tools: [],
+            },
+            local: { argv: ["/mcp"], secretReferences: {} },
+          }),
+      },
+      startMcp: async (_profile, resolveSecret) => {
+        expect(await resolveSecret("missing")).toBeUndefined();
+        return {
+          probe: () => Promise.reject(nonErrorFailure("probe failed")),
+          request: () => Promise.resolve({}),
+          stop: () => Promise.resolve(),
+        };
+      },
+      removeMcpBridgeRoot: () =>
+        Promise.reject(nonErrorFailure("root removal failed")),
+    }).execute(lease, {
+      ...context(),
+      emit: (event) => {
+        events.push(event);
+        return Promise.resolve();
+      },
+    });
+
+    expect(result.status).toBe("failed");
+    expect(JSON.stringify(events)).toContain(
+      "MCP execution failed: probe failed; MCP cleanup failed: root removal failed",
+    );
+  });
 
   it("maps a cancelled plugin without an error through the harness failure boundary", async () => {
     const root = await temporaryRoot();
