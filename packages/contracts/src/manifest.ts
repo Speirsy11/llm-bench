@@ -4,6 +4,16 @@ import { CapabilitySchema } from "./capability";
 import { MetricDefinitionSchema } from "./metric";
 
 /**
+ * Canonical SemVer for installable/versioned artifacts. Unlike the plugin wire
+ * protocol, artifact versions may include prerelease and build identifiers.
+ */
+export const ArtifactVersionSchema = z
+  .string()
+  .regex(
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u,
+  );
+
+/**
  * Benchmark and harness manifests. A benchmark advertises its required
  * capabilities and the metrics it reports; a harness advertises the
  * capabilities it supports and the model routes it can drive.
@@ -19,7 +29,7 @@ export type BenchmarkKind = z.infer<typeof BenchmarkKindSchema>;
 export const BenchmarkManifestSchema = z
   .strictObject({
     id: z.string().min(1),
-    version: z.string().min(1),
+    version: ArtifactVersionSchema,
     kind: BenchmarkKindSchema,
     primaryMetricId: z.string().min(1),
     metrics: z.array(MetricDefinitionSchema).min(1),
@@ -44,14 +54,14 @@ export type ModelRoute = z.infer<typeof ModelRouteSchema>;
 
 export const McpProfileRefSchema = z.strictObject({
   id: z.string().min(1),
-  version: z.string().min(1),
+  version: ArtifactVersionSchema,
   contentHash: z.string().regex(/^[a-f0-9]{64}$/u),
 });
 export type McpProfileRef = z.infer<typeof McpProfileRefSchema>;
 
 export const ToolsetSchema = z.strictObject({
   id: z.string().min(1),
-  version: z.string().min(1),
+  version: ArtifactVersionSchema,
   tools: z.array(z.string().min(1)),
   mcpProfiles: z.array(McpProfileRefSchema),
 });
@@ -67,7 +77,7 @@ export type Limits = z.infer<typeof LimitsSchema>;
 
 export const HarnessManifestSchema = z.strictObject({
   id: z.string().min(1),
-  version: z.string().min(1),
+  version: ArtifactVersionSchema,
   capabilities: z.array(CapabilitySchema),
   modelRoutes: z.array(ModelRouteSchema),
 });

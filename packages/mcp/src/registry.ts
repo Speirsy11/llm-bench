@@ -1,12 +1,23 @@
 import { createHash } from "node:crypto";
-import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { constants } from "node:fs";
+import {
+  access,
+  chmod,
+  mkdir,
+  readFile,
+  realpath,
+  rename,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 import type { McpProfile, McpProfileInput, McpProfileMetadata } from "./types";
 
 const PROFILE_PATH = ["mcp-profiles.json"];
 const IDENTIFIER = /^[a-z][a-z0-9-]*$/u;
-const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
+const VERSION =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const ENVIRONMENT_KEY = /^[A-Z_][A-Z0-9_]*$/u;
 const RESERVED_ENVIRONMENT_KEYS = new Set([
@@ -20,6 +31,35 @@ const RESERVED_ENVIRONMENT_KEYS = new Set([
   "LANG",
   "LC_ALL",
 ]);
+const WRAPPER_EXECUTABLES = new Set([
+  "corepack",
+  "env",
+  "npm",
+  "npx",
+  "pnpm",
+  "uv",
+  "uvx",
+  "xargs",
+  "yarn",
+]);
+const UNSUPPORTED_INTERPRETERS = new Set([
+  "bun",
+  "deno",
+  "java",
+  "perl",
+  "php",
+  "ruby",
+]);
+
+export interface VerifiedMcpLaunch {
+  argv: [string, ...string[]];
+  cwd?: string;
+}
+
+interface AttestedExecution {
+  artifacts: { path: string; contentHash: string }[];
+  launch: VerifiedMcpLaunch;
+}
 
 /**
  * Stores operator-installed profiles beneath a runner-owned root. Metadata is
@@ -36,7 +76,7 @@ export class McpProfileRegistry {
 
   async add(profile: McpProfileInput): Promise<void> {
     await this.#mutate(async () => {
-      const normalized = withContentHash(profile);
+      const normalized = await withContentHash(profile);
       assertNoImportedSecretReferences(normalized);
       const profiles = await this.#read();
       if (
@@ -109,6 +149,7 @@ export class McpProfileRegistry {
     if (profile === undefined) {
       throw new Error(`MCP profile '${id}' is not installed.`);
     }
+    await verifyMcpProfileArtifacts(profile);
     return cloneProfile(profile);
   }
 
@@ -158,9 +199,7 @@ export class McpProfileRegistry {
 }
 
 /** Stable identity for the complete runner-local profile, excluding its hash. */
-export function mcpProfileContentHash(
-  profile: McpProfileInput | McpProfile,
-): string {
+export function mcpProfileContentHash(profile: McpProfile): string {
   const { metadata, local } = profile;
   return createHash("sha256")
     .update(
@@ -180,13 +219,14 @@ export function mcpProfileContentHash(
           argv: local.argv,
           ...(local.cwd === undefined ? {} : { cwd: local.cwd }),
           secretReferences: local.secretReferences,
+          artifactAttestations: local.artifactAttestations,
         },
       }),
     )
     .digest("hex");
 }
 
-function withContentHash(profile: McpProfileInput): McpProfile {
+async function withContentHash(profile: McpProfileInput): Promise<McpProfile> {
   if (
     !isRecord(profile) ||
     !isRecord(profile.metadata) ||
@@ -199,11 +239,125 @@ function withContentHash(profile: McpProfileInput): McpProfile {
       ...structuredClone(profile.metadata),
       contentHash: "0".repeat(64),
     },
-    local: structuredClone(profile.local),
+    local: {
+      ...structuredClone(profile.local),
+      artifactAttestations: [
+        { path: "pending-attestation", contentHash: "0".repeat(64) },
+      ],
+    },
   };
   validateProfile(normalized as unknown as Record<string, unknown>);
+  normalized.local.artifactAttestations = (
+    await attestExecutionArtifacts(profile)
+  ).artifacts;
   normalized.metadata.contentHash = mcpProfileContentHash(normalized);
   return normalized;
+}
+
+async function attestExecutionArtifacts(
+  profile: McpProfileInput,
+): Promise<AttestedExecution> {
+  const [command, firstArgument] = profile.local.argv;
+  const commandPath = await attestedFile(command, true);
+  const commandName = basename(commandPath).toLowerCase();
+  if (WRAPPER_EXECUTABLES.has(commandName)) {
+    throw new Error(
+      "MCP profile execution cannot be attested through an unsupported wrapper.",
+    );
+  }
+  if (UNSUPPORTED_INTERPRETERS.has(commandName)) {
+    throw new Error("MCP profile execution uses an unsupported interpreter.");
+  }
+  const paths = [commandPath];
+  const launchArguments = profile.local.argv.slice(1);
+  if (firstArgument !== undefined && isScriptRuntime(commandPath)) {
+    if (firstArgument.startsWith("-")) {
+      throw new Error(
+        "MCP profile execution cannot be attested when an interpreter option precedes its script.",
+      );
+    }
+    const scriptPath = isAbsolute(firstArgument)
+      ? firstArgument
+      : resolve(profile.local.cwd ?? process.cwd(), firstArgument);
+    const resolvedScript = await attestedFile(scriptPath, false);
+    paths.push(resolvedScript);
+    launchArguments[0] = resolvedScript;
+  } else if (
+    firstArgument !== undefined &&
+    profile.local.argv.slice(1).some((argument) => !argument.startsWith("-"))
+  ) {
+    throw new Error(
+      "MCP profile execution has ambiguous positional executable inputs.",
+    );
+  }
+  const artifacts = await Promise.all(
+    paths.map(async (path) => ({
+      path,
+      contentHash: createHash("sha256")
+        .update(await readFile(path))
+        .digest("hex"),
+    })),
+  );
+  return {
+    artifacts,
+    launch: {
+      argv: [commandPath, ...launchArguments],
+      ...(profile.local.cwd === undefined ? {} : { cwd: profile.local.cwd }),
+    },
+  };
+}
+
+async function attestedFile(
+  path: string,
+  executable: boolean,
+): Promise<string> {
+  try {
+    const resolved = await realpath(path);
+    const details = await stat(resolved);
+    if (!details.isFile()) throw new Error("not a file");
+    if (executable) await access(resolved, constants.X_OK);
+    return resolved;
+  } catch {
+    throw new Error(`MCP execution artifact '${path}' cannot be attested.`);
+  }
+}
+
+function isScriptRuntime(command: string): boolean {
+  return /^(?:node|python(?:3(?:\.\d+)?)?|bash|sh)$/u.test(basename(command));
+}
+
+export async function verifyMcpProfileArtifacts(
+  profile: McpProfile,
+): Promise<VerifiedMcpLaunch> {
+  const attestations = profile.local.artifactAttestations;
+  if (attestations === undefined || attestations.length === 0) {
+    throw new Error(
+      `MCP profile '${profile.metadata.id}' has unverifiable execution artifacts. Reinstall it.`,
+    );
+  }
+  let current: AttestedExecution;
+  try {
+    current = await attestExecutionArtifacts(profile);
+  } catch {
+    throw artifactChanged(profile.metadata.id);
+  }
+  if (
+    current.artifacts.length !== attestations.length ||
+    current.artifacts.some(
+      (artifact, index) =>
+        artifact.path !== attestations[index]?.path ||
+        artifact.contentHash !== attestations[index].contentHash,
+    )
+  ) {
+    throw artifactChanged(profile.metadata.id);
+  }
+  return current.launch;
+}
+
+function artifactChanged(id: string): Error {
+  return new Error(
+    `MCP profile '${id}' execution artifacts changed after installation. Reinstall it.`,
+  );
 }
 
 function assertNoImportedSecretReferences(profile: McpProfileInput): void {
@@ -258,6 +412,16 @@ function validateProfile(
     ) ||
     (local.cwd !== undefined && typeof local.cwd !== "string") ||
     !isRecord(local.secretReferences) ||
+    !Array.isArray(local.artifactAttestations) ||
+    local.artifactAttestations.length === 0 ||
+    local.artifactAttestations.some(
+      (artifact) =>
+        !isRecord(artifact) ||
+        typeof artifact.path !== "string" ||
+        artifact.path.length === 0 ||
+        typeof artifact.contentHash !== "string" ||
+        !SHA256.test(artifact.contentHash),
+    ) ||
     Object.entries(local.secretReferences).some(
       ([key, reference]) =>
         !ENVIRONMENT_KEY.test(key) ||

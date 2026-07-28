@@ -76,7 +76,8 @@ local executable in
 ### Runner-installed MCP profiles
 
 Create an owner-controlled JSON file without a `contentHash`; the registry
-computes a stable hash from the complete profile:
+computes a stable hash from the complete profile and its resolved executable
+artifacts:
 
 ```json
 {
@@ -113,13 +114,19 @@ object. Grant each server environment name to a runner environment variable
 locally with `mcp grant`; only then may that profile resolve it from the runner
 environment. `HOME`, `CODEX_HOME`, process launch variables, provider
 credentials, executable arguments, and secret references are never advertised
-to the control plane. `probe`,
+to the control plane. Resolved secret values are redacted from MCP capabilities,
+results, errors, CLI output, and plugin bridge responses. Executable and direct
+interpreter-script bytes are reverified before launch; replacing an artifact or
+retargeting its symlink requires reinstalling the profile. `probe`,
 `capabilities`, and `start` are bounded start/probe/stop operations; MCP
 processes are otherwise job-owned and always stopped after completion,
 failure, cancellation, or partial startup. There is no untracked persistent MCP
 daemon for a later CLI process to inherit. A selected plugin receives only a
 job-scoped owner-only Unix socket descriptor; the runner bridges JSON-RPC to the
 initialized stdio server and removes the socket when the job ends.
+The per-attempt socket directory is also removed. Cleanup failures fail an
+otherwise successful run; if execution already failed, its primary error is
+retained and annotated with the cleanup failure.
 
 Stop the runner before changing extensions and restart it afterwards so its
 pairing/heartbeat inventory is a stable snapshot for leased jobs.

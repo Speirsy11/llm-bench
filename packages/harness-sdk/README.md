@@ -52,9 +52,18 @@ const reply: HandshakeReply = {
 process.stdout.write(encodeProtocolLine(reply));
 ```
 
-Peers accept compatible `1.x.y` protocol messages. An unsupported major throws
+The handshake accepts compatible numeric `1.x.y` wire protocol versions. Once
+the runner has matched the handshake to the installed plugin, every
+`run_event` and `run_result` must use that exact negotiated version.
+`assertValidRunTranscript(messages, negotiatedProtocolVersion)` enforces this
+alongside event ordering and terminal-result rules. An unsupported major throws
 `PluginProtocolVersionError`, whose message names both versions and instructs
 the operator to update or reinstall the plugin.
+
+Descriptor versions are distinct from wire protocol versions. Plugin
+manifests, benchmarks, toolsets, and MCP profiles use full SemVer and may
+include prerelease and build identifiers such as `2.0.0-rc.1+build.7`. Wire
+`protocolVersion` fields remain strict numeric `x.y.z`.
 
 ## Credentials and local installation security
 
@@ -76,8 +85,9 @@ boundaries before invoking local tools.
   `RunRequestSchema` validate inbound protocol messages.
 - `encodeProtocolLine` and `decodeProtocolLine` implement bounded JSONL.
 - `assertCompatibleProtocolVersion` checks major compatibility.
-- `assertValidRunTranscript` verifies contiguous events and exactly one
-  terminal result after collecting a plugin's output.
+- `assertValidRunTranscript` verifies an exact negotiated protocol version,
+  contiguous events, and exactly one terminal result after collecting a
+  plugin's output.
 
 ## Publishing
 

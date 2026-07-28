@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import type {
   HandshakeReply,
+  PluginCheckpoint,
   PluginCredentials,
   PluginManifest,
   PluginMcpConnection,
@@ -47,6 +48,8 @@ interface ExecutablePluginHarnessOptions {
   maxOutputBytes?: number;
 }
 
+type PluginEvent = RunEvent["event"];
+
 /**
  * Per-job executable plugin boundary. The child receives one handshake and one
  * run request, then must exit after exactly one valid terminal transcript.
@@ -84,6 +87,7 @@ export class ExecutablePluginHarness {
       signal: request.signal,
       maxOutputBytes: this.options.maxOutputBytes ?? 10 * 1024 * 1024,
       redact: Object.values(credentials),
+      redactStdout: false,
     });
     if (processResult.exitCode !== 0) {
       const detail =
@@ -94,23 +98,139 @@ export class ExecutablePluginHarness {
         `Plugin ${this.installation.manifest.id} exited with code ${String(processResult.exitCode)}${detail}`,
       );
     }
-    const messages = processResult.stdoutLines.map((line) =>
-      decodeProtocolLine(line),
+    const runTranscript = validatedRunTranscript(
+      processResult.stdoutLines,
+      this.installation,
     );
+    const redact = secretRedactor(Object.values(credentials));
+    const safeTranscript = runTranscript.map((message) =>
+      redactDecodedRunMessage(message, redact),
+    );
+    const terminal = safeTranscript.at(-1) as RunResult;
+    return adapterResult(request.jobId, safeTranscript, terminal);
+  }
+}
+
+function validatedRunTranscript(
+  stdoutLines: readonly string[],
+  installation: ExecutablePluginInstallation,
+): readonly (RunEvent | RunResult)[] {
+  try {
+    const messages = stdoutLines.map((line) => decodeProtocolLine(line));
     const [handshake, ...transcript] = messages;
-    assertHandshake(handshake, this.installation);
+    assertHandshake(handshake, installation);
     const runTranscript = transcript.map((message) => {
       if (message.kind !== "run_event" && message.kind !== "run_result") {
-        throw new Error(
-          `Plugin ${this.installation.manifest.id} emitted an unexpected ${message.kind} after its handshake.`,
-        );
+        throw new Error("Unexpected plugin protocol message.");
       }
       return message;
     });
-    assertValidRunTranscript(runTranscript);
-    const terminal = runTranscript.at(-1) as RunResult;
-    return adapterResult(request.jobId, runTranscript, terminal);
+    assertValidRunTranscript(runTranscript, installation.protocolVersion);
+    return runTranscript;
+  } catch {
+    throw new Error(
+      "Installed plugin emitted invalid protocol output. Verify plugin compatibility or reinstall the plugin.",
+    );
   }
+}
+
+function secretRedactor(secrets: readonly string[]): (value: string) => string {
+  const ordered = [
+    ...new Set(secrets.filter((secret) => secret.length > 0)),
+  ].sort((left, right) => right.length - left.length);
+  return (value) => {
+    let safe = value;
+    for (const secret of ordered) {
+      safe = safe.replaceAll(secret, "[REDACTED]");
+    }
+    return safe;
+  };
+}
+
+function redactDecodedRunMessage(
+  message: RunEvent | RunResult,
+  redact: (value: string) => string,
+): RunEvent | RunResult {
+  if (message.kind === "run_event") {
+    return { ...message, event: redactPluginEvent(message.event, redact) };
+  }
+  const checkpoint = redactCheckpoint(message.checkpoint, redact);
+  if (message.status === "completed") {
+    return {
+      ...message,
+      output: redact(message.output),
+      observations: message.observations.map((observation) => ({
+        ...observation,
+        metricId: redact(observation.metricId),
+      })),
+      checkpoint,
+      metadata: redactRecord(message.metadata, redact),
+    };
+  }
+  if (message.status === "failed") {
+    return {
+      ...message,
+      error: redact(message.error),
+      checkpoint,
+    };
+  }
+  return { ...message, checkpoint };
+}
+
+function redactPluginEvent(
+  event: PluginEvent,
+  redact: (value: string) => string,
+): PluginEvent {
+  if (event.type === "progress") {
+    return { ...event, message: redact(event.message) };
+  }
+  if (event.type === "checkpoint") {
+    return {
+      ...event,
+      checkpoint: {
+        ...event.checkpoint,
+        state: redactRecord(event.checkpoint.state, redact),
+      },
+    };
+  }
+  return event;
+}
+
+function redactCheckpoint(
+  checkpoint: PluginCheckpoint | null,
+  redact: (value: string) => string,
+): PluginCheckpoint | null {
+  if (checkpoint === null) return null;
+  return {
+    ...checkpoint,
+    state: redactRecord(checkpoint.state, redact),
+  };
+}
+
+function redactRecord(
+  value: Record<string, unknown>,
+  redact: (value: string) => string,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [
+      redact(key),
+      redactUnknown(child, redact),
+    ]),
+  );
+}
+
+function redactUnknown(
+  value: unknown,
+  redact: (value: string) => string,
+): unknown {
+  if (typeof value === "string") return redact(value);
+  if (Array.isArray(value)) {
+    return value.map((item) => redactUnknown(item, redact));
+  }
+  if (value !== null && typeof value === "object") {
+    return redactRecord(value as Record<string, unknown>, redact);
+  }
+  return value;
 }
 
 function pluginRunRequest(
@@ -155,20 +275,14 @@ function assertHandshake(
   installation: ExecutablePluginInstallation,
 ): asserts message is HandshakeReply {
   if (message?.kind !== "handshake_reply") {
-    throw new Error(
-      `Plugin ${installation.manifest.id} did not begin with a handshake reply.`,
-    );
+    throw new Error("Plugin output did not begin with a handshake reply.");
   }
   if (message.protocolVersion !== installation.protocolVersion) {
-    throw new Error(
-      `Plugin ${installation.manifest.id} protocol changed after installation: expected ${installation.protocolVersion}, received ${message.protocolVersion}. Reinstall the plugin.`,
-    );
+    throw new Error("Plugin protocol changed after installation.");
   }
   const advertised = coreManifest(message.manifest);
   if (!isDeepStrictEqual(advertised, installation.manifest)) {
-    throw new Error(
-      `Plugin ${installation.manifest.id} manifest changed after installation. Reinstall the plugin.`,
-    );
+    throw new Error("Plugin manifest changed after installation.");
   }
 }
 

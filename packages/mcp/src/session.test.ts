@@ -1,11 +1,15 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import {
   access,
   chmod,
   mkdir,
   mkdtemp,
+  readFile,
   rm,
   stat,
+  symlink,
   unlink,
   writeFile,
 } from "node:fs/promises";
@@ -74,6 +78,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         local: {
           argv: [process.execPath, fixture],
           secretReferences: { MCP_TOKEN: "keychain:fixture" },
+          artifactAttestations: artifactAttestationsFor([
+            process.execPath,
+            fixture,
+          ]),
         },
       },
       (reference) =>
@@ -89,11 +97,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       protocolVersion: "2025-06-18",
       capabilities: {
         tools: {
-          HOME: undefined,
-          CODEX_HOME: undefined,
-          OPENAI_API_KEY: undefined,
-          ARBITRARY_ENV: undefined,
-          MCP_TOKEN: "resolved-token",
+          MCP_TOKEN: "[REDACTED]",
         },
       },
     });
@@ -101,16 +105,268 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       protocolVersion: "2025-06-18",
       capabilities: {
         tools: {
-          HOME: undefined,
-          CODEX_HOME: undefined,
-          OPENAI_API_KEY: undefined,
-          ARBITRARY_ENV: undefined,
-          MCP_TOKEN: "resolved-token",
+          MCP_TOKEN: "[REDACTED]",
         },
       },
     });
     await session.stop();
     await expect(session.stop()).resolves.toBeUndefined();
+  });
+
+  it("redacts resolved secret canaries from results, errors, and large bridge responses", async () => {
+    const root = await mkdtemp(join(tmpdir(), "llm-bench-mcp-session-"));
+    roots.push(root);
+    const fixture = join(root, "redaction.mjs");
+    const canary = "mcp-secret-canary";
+    await writeFile(
+      fixture,
+      `import { createInterface } from "node:readline";
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.method === "initialize") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {
+      protocolVersion: "2025-06-18", capabilities: { leaked: process.env.MCP_TOKEN },
+    } }) + "\\n");
+  } else if (request.method === "tools/large") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {
+      text: "x".repeat(128 * 1024) + process.env.MCP_TOKEN,
+    } }) + "\\n");
+  } else {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, error: {
+      code: -32000, message: "failed " + process.env.MCP_TOKEN,
+    } }) + "\\n");
+  }
+});`,
+    );
+    const session = await startMcpSession(
+      profileFor(fixture, { MCP_TOKEN: "runner:canary" }),
+      () => Promise.resolve(canary),
+    );
+    expect("secrets" in session).toBe(false);
+
+    const initialized = await session.probe();
+    expect(JSON.stringify(initialized)).not.toContain(canary);
+    const large = await session.request("tools/large");
+    expect(JSON.stringify(large)).not.toContain(canary);
+    expect(JSON.stringify(large).length).toBeGreaterThan(128 * 1024);
+    await expect(session.request("tools/error")).rejects.toThrow(
+      "failed [REDACTED]",
+    );
+    await session.stop();
+  });
+
+  it("requires a supported negotiated protocol version", async () => {
+    const root = await mkdtemp(join(tmpdir(), "llm-bench-mcp-session-"));
+    roots.push(root);
+    for (const [name, protocolVersion] of [
+      ["missing", undefined],
+      ["unsupported", "2099-01-01"],
+    ] as const) {
+      const fixture = join(root, `${name}.mjs`);
+      await writeFile(
+        fixture,
+        `import { createInterface } from "node:readline"; createInterface({ input: process.stdin }).on("line", (line) => { const request = JSON.parse(line); process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { capabilities: {}, ${protocolVersion === undefined ? "" : `protocolVersion: ${JSON.stringify(protocolVersion)}`} } }) + "\\n"); });`,
+      );
+      const session = await startMcpSession(profileFor(fixture), () =>
+        Promise.resolve(undefined),
+      );
+      await expect(session.probe()).rejects.toThrow(
+        "unsupported protocol version",
+      );
+      await session.stop();
+    }
+
+    const canary = "protocol-secret-canary";
+    const fixture = join(root, "secret-version.mjs");
+    await writeFile(
+      fixture,
+      `import { createInterface } from "node:readline"; createInterface({ input: process.stdin }).on("line", (line) => { const request = JSON.parse(line); process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { capabilities: {}, protocolVersion: process.env.MCP_TOKEN } }) + "\\n"); });`,
+    );
+    const session = await startMcpSession(
+      profileFor(fixture, { MCP_TOKEN: "runner:protocol-canary" }),
+      () => Promise.resolve(canary),
+    );
+    const error = await session.probe().catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).not.toContain(canary);
+    await session.stop();
+  });
+
+  it("redacts deduplicated overlapping secrets longest-first", async () => {
+    const root = await mkdtemp(join(tmpdir(), "llm-bench-mcp-session-"));
+    roots.push(root);
+    const fixture = join(root, "overlap.mjs");
+    await writeFile(
+      fixture,
+      `import { createInterface } from "node:readline"; createInterface({ input: process.stdin }).on("line", (line) => { const request = JSON.parse(line); process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { protocolVersion: "2025-06-18", capabilities: { value: process.env.LONG_SECRET } } }) + "\\n"); });`,
+    );
+    const session = await startMcpSession(
+      profileFor(fixture, {
+        SHORT_SECRET: "runner:short",
+        LONG_SECRET: "runner:long",
+        DUPLICATE_SECRET: "runner:duplicate",
+      }),
+      (reference) =>
+        Promise.resolve(reference === "runner:short" ? "token" : "token-long"),
+    );
+    await expect(session.probe()).resolves.toMatchObject({
+      capabilities: { value: "[REDACTED]" },
+    });
+    await session.stop();
+  });
+
+  it("preserves split UTF-8 code points in server messages", async () => {
+    const root = await mkdtemp(join(tmpdir(), "llm-bench-mcp-session-"));
+    roots.push(root);
+    const fixture = join(root, "unicode.mjs");
+    await writeFile(
+      fixture,
+      `import { createInterface } from "node:readline"; createInterface({ input: process.stdin }).on("line", (line) => { const request = JSON.parse(line); const bytes = Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { protocolVersion: "2025-06-18", capabilities: { label: "snowman ☃" } } }) + "\\n"); const split = bytes.indexOf(Buffer.from("☃")) + 1; process.stdout.write(bytes.subarray(0, split)); setTimeout(() => process.stdout.write(bytes.subarray(split)), 5); });`,
+    );
+    const session = await startMcpSession(profileFor(fixture), () =>
+      Promise.resolve(undefined),
+    );
+    await expect(session.probe()).resolves.toMatchObject({
+      capabilities: { label: "snowman ☃" },
+    });
+    await session.stop();
+  });
+
+  it("reverifies artifacts after delayed secret resolution before launch", async () => {
+    const root = await mkdtemp(join(tmpdir(), "llm-bench-mcp-session-"));
+    roots.push(root);
+    const fixture = join(root, "delayed.mjs");
+    const marker = join(root, "launched");
+    await writeFile(
+      fixture,
+      `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(marker)}, "old");`,
+    );
+    let release!: () => void;
+    let started!: () => void;
+    const resolving = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const launch = startMcpSession(
+      profileFor(fixture, { MCP_TOKEN: "runner:delayed" }),
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve("secret");
+          started();
+        }),
+    );
+    await resolving;
+    await writeFile(
+      fixture,
+      `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(marker)}, "changed");`,
+    );
+    release();
+    await expect(launch).rejects.toThrow("execution artifacts changed");
+    await expect(access(marker)).rejects.toThrow();
+
+    const firstTarget = join(root, "first-target.mjs");
+    const secondTarget = join(root, "second-target.mjs");
+    const linkedFixture = join(root, "linked.mjs");
+    const linkedMarker = join(root, "linked-launched");
+    await writeFile(
+      firstTarget,
+      `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(linkedMarker)}, "old");`,
+    );
+    await writeFile(
+      secondTarget,
+      `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(linkedMarker)}, "changed");`,
+    );
+    await symlink(firstTarget, linkedFixture);
+    let releaseLinked!: () => void;
+    let markLinkedResolverStarted!: () => void;
+    const linkedResolverStarted = new Promise<void>((resolve) => {
+      markLinkedResolverStarted = resolve;
+    });
+    const linkedLaunch = startMcpSession(
+      profileFor(linkedFixture, { MCP_TOKEN: "runner:linked-delayed" }),
+      () =>
+        new Promise((resolve) => {
+          releaseLinked = () => resolve("secret");
+          markLinkedResolverStarted();
+        }),
+    );
+    await linkedResolverStarted;
+    await unlink(linkedFixture);
+    await symlink(secondTarget, linkedFixture);
+    releaseLinked();
+    await expect(linkedLaunch).rejects.toThrow("execution artifacts changed");
+    await expect(access(linkedMarker)).rejects.toThrow();
+  });
+
+  it("does not launch when cancellation follows resolved secrets in the same turn", async () => {
+    const root = await mkdtemp(join(tmpdir(), "llm-bench-mcp-session-"));
+    roots.push(root);
+    const fixture = join(root, "cancel-race.mjs");
+    const marker = join(root, "launched");
+    await writeFile(
+      fixture,
+      `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(marker)}, "launched");`,
+    );
+    const controller = new AbortController();
+    let resolveSecret!: (value: string) => void;
+    const secret = new Promise<string>((resolve) => {
+      resolveSecret = resolve;
+    });
+    const launch = startMcpSession(
+      profileFor(fixture, { MCP_TOKEN: "runner:cancel-race" }),
+      () => secret,
+      { signal: controller.signal },
+    );
+    resolveSecret("secret");
+    controller.abort();
+    await expect(launch).rejects.toThrow("cancelled");
+    await expect(access(marker)).rejects.toThrow();
+  });
+
+  it("bounds cancellation after spawn when the child ignores SIGTERM", async () => {
+    const root = await mkdtemp(join(tmpdir(), "llm-bench-mcp-session-"));
+    roots.push(root);
+    const fixture = join(root, "ignore-term.mjs");
+    const ready = join(root, "ready");
+    await writeFile(
+      fixture,
+      `import { writeFileSync } from "node:fs";
+process.on("SIGTERM", () => {});
+writeFileSync(${JSON.stringify(ready)}, String(process.pid));
+setInterval(() => {}, 1_000);`,
+    );
+    const controller = new AbortController();
+    const nativeAborted = Object.getOwnPropertyDescriptor(
+      AbortSignal.prototype,
+      "aborted",
+    )?.get?.bind(controller.signal);
+    if (nativeAborted === undefined) throw new Error("Missing aborted getter.");
+    let checks = 0;
+    Object.defineProperty(controller.signal, "aborted", {
+      configurable: true,
+      get() {
+        checks += 1;
+        if (checks === 4) {
+          const deadline = Date.now() + 2_000;
+          while (!existsSync(ready) && Date.now() < deadline) {
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+          }
+          if (!existsSync(ready))
+            throw new Error("Child did not become ready.");
+          controller.abort();
+        }
+        return nativeAborted() as boolean;
+      },
+    });
+
+    const startedAt = Date.now();
+    await expect(
+      startMcpSession(profileFor(fixture), () => Promise.resolve(undefined), {
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("cancelled");
+    expect(Date.now() - startedAt).toBeLessThan(1_500);
+    const pid = Number(await readFile(ready, "utf8"));
+    expect(() => process.kill(pid, 0)).toThrow();
   });
 
   it("bridges a real child tools/list request to the initialized stdio session", async () => {
@@ -127,10 +383,16 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     globalThis.initialized = true;
     return;
   }
+  if (request.method === "tools/error") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, error: {
+      code: -32000, message: "secret " + process.env.MCP_TOKEN,
+    } }) + "\\n");
+    return;
+  }
   const result = request.method === "initialize"
     ? { protocolVersion: "2025-06-18", capabilities: { tools: {} } }
     : globalThis.initialized
-      ? { tools: [{ name: "fixture_echo", description: "Echo a value", inputSchema: { type: "object" } }] }
+      ? { tools: [{ name: "fixture_echo", description: process.env.MCP_TOKEN, inputSchema: { type: "object" } }] }
       : { blocked: true };
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
 });`,
@@ -150,8 +412,9 @@ socket.on("data", (chunk) => {
   socket.end();
 });`,
     );
-    const session = await startMcpSession(profileFor(server), () =>
-      Promise.resolve(undefined),
+    const session = await startMcpSession(
+      profileFor(server, { MCP_TOKEN: "runner:bridge-canary" }),
+      () => Promise.resolve("bridge-secret-canary"),
     );
     await session.probe();
     const bridgeRoot = join(root, "job-bridge");
@@ -173,11 +436,23 @@ socket.on("data", (chunk) => {
         tools: [
           {
             name: "fixture_echo",
-            description: "Echo a value",
+            description: "[REDACTED]",
             inputSchema: { type: "object" },
           },
         ],
       },
+    });
+    const errorResponse = await socketRequest(
+      bridge.socketPath,
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: "plugin-error",
+        method: "tools/error",
+      }),
+    );
+    expect(JSON.stringify(errorResponse)).not.toContain("bridge-secret-canary");
+    expect(errorResponse).toMatchObject({
+      error: { message: "secret [REDACTED] (JSON-RPC -32000)" },
     });
 
     await bridge.stop();
@@ -193,7 +468,7 @@ socket.on("data", (chunk) => {
       fixture,
       `import { createInterface } from "node:readline";
 createInterface({ input: process.stdin }).on("line", () => {
-  const response = JSON.stringify({ jsonrpc: "2.0", id: 1, result: { capabilities: { tools: {} } } });
+  const response = JSON.stringify({ jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18", capabilities: { tools: {} } } });
   process.stdout.write(response.slice(0, 24));
   setTimeout(() => process.stdout.write(response.slice(24) + "\\n"), 10);
 });`,
@@ -204,7 +479,7 @@ createInterface({ input: process.stdin }).on("line", () => {
 
     await expect(session.probe()).resolves.toEqual({
       capabilities: { tools: {} },
-      protocolVersion: undefined,
+      protocolVersion: "2025-06-18",
     });
     await session.stop();
   });
@@ -252,7 +527,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   const request = JSON.parse(line);
   if (request.method === "initialize") {
     process.stdout.write(JSON.stringify({
-      jsonrpc: "2.0", id: request.id, result: { capabilities: { tools: {} } },
+      jsonrpc: "2.0", id: request.id, result: { protocolVersion: "2025-06-18", capabilities: { tools: {} } },
     }) + "\\n");
     return;
   }
@@ -302,7 +577,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   const request = JSON.parse(line);
   if (request.method === "initialize") {
     process.stdout.write(JSON.stringify({
-      jsonrpc: "2.0", id: request.id, result: { capabilities: {} },
+      jsonrpc: "2.0", id: request.id, result: { protocolVersion: "2025-06-18", capabilities: {} },
     }) + "\\n");
   } else if (request.method === "tools/call") {
     process.stdout.write(JSON.stringify({
@@ -424,7 +699,27 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       id: 7,
       error: { code: -32603, message: "runner-local failure" },
     });
-    expect(observed).toEqual([{ method: "tools/call", params: {} }]);
+    const unicodeRequest = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 8,
+      method: "tools/☃",
+    });
+    const unicodeBytes = Buffer.from(`${unicodeRequest}\n`);
+    const snowmanOffset = unicodeBytes.indexOf(Buffer.from("☃"));
+    await expect(
+      socketRequestChunks(bridge.socketPath, [
+        unicodeBytes.subarray(0, snowmanOffset + 1),
+        unicodeBytes.subarray(snowmanOffset + 1),
+      ]),
+    ).resolves.toEqual({
+      jsonrpc: "2.0",
+      id: 8,
+      error: { code: -32603, message: "runner-local failure" },
+    });
+    expect(observed).toEqual([
+      { method: "tools/call", params: {} },
+      { method: "tools/☃", params: {} },
+    ]);
     await expect(
       startMcpUnixBridge(
         { request: () => Promise.resolve({}) },
@@ -523,6 +818,22 @@ createInterface({ input: process.stdin }).on("line", () => process.stdout.write(
 
     await expect(session.probe()).rejects.toThrow("output exceeded 32 bytes");
     await expect(session.stop()).resolves.toBeUndefined();
+
+    const stderrFixture = join(root, "stderr-bound.mjs");
+    await writeFile(
+      stderrFixture,
+      `import { createInterface } from "node:readline";
+createInterface({ input: process.stdin }).on("line", () => process.stderr.write("x".repeat(64)));`,
+    );
+    const stderrSession = await startMcpSession(
+      profileFor(stderrFixture),
+      () => Promise.resolve(undefined),
+      { maxStderrBytes: 32 },
+    );
+    await expect(stderrSession.probe()).rejects.toThrow(
+      "stderr exceeded 32 bytes",
+    );
+    await expect(stderrSession.stop()).resolves.toBeUndefined();
   });
 
   it("cancels an in-flight probe and accepts a cached capability result", async () => {
@@ -535,7 +846,7 @@ createInterface({ input: process.stdin }).on("line", () => process.stdout.write(
       `import { createInterface } from "node:readline";
 createInterface({ input: process.stdin }).on("line", (line) => {
   const request = JSON.parse(line);
-  if (request.method === "initialize") process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { capabilities: {} } }) + "\\n");
+  if (request.method === "initialize") process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18", capabilities: {} } }) + "\\n");
 });`,
     );
     await writeFile(silent, "setInterval(() => {}, 1_000);");
@@ -544,16 +855,16 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     );
     await expect(first.probe()).resolves.toEqual({
       capabilities: {},
-      protocolVersion: undefined,
+      protocolVersion: "2025-06-18",
     });
     await expect(first.probe()).resolves.toEqual({
       capabilities: {},
-      protocolVersion: undefined,
+      protocolVersion: "2025-06-18",
     });
     await first.stop();
     await expect(first.probe()).resolves.toEqual({
       capabilities: {},
-      protocolVersion: undefined,
+      protocolVersion: "2025-06-18",
     });
 
     const second = await startMcpSession(profileFor(silent), () =>
@@ -614,14 +925,20 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     roots.push(root);
     const controller = new AbortController();
     let release!: () => void;
+    let markResolverStarted!: () => void;
+    const resolverStarted = new Promise<void>((resolve) => {
+      markResolverStarted = resolve;
+    });
     const resolving = startMcpSession(
       profileFor(process.execPath, { MCP_TOKEN: "keychain:delayed" }),
       () =>
         new Promise((resolve) => {
+          markResolverStarted();
           release = () => resolve("secret");
         }),
       { signal: controller.signal },
     );
+    await resolverStarted;
     controller.abort();
     release();
 
@@ -687,14 +1004,14 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       fixture,
       `import { createInterface } from "node:readline";
 process.stderr.write("diagnostic");
-createInterface({ input: process.stdin }).on("line", () => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { capabilities: {} } }) + "\\n"));`,
+createInterface({ input: process.stdin }).on("line", () => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18", capabilities: {} } }) + "\\n"));`,
     );
     const healthy = await startMcpSession(profileFor(fixture), () =>
       Promise.resolve(undefined),
     );
     await expect(healthy.probe()).resolves.toEqual({
       capabilities: {},
-      protocolVersion: undefined,
+      protocolVersion: "2025-06-18",
     });
     await healthy.stop();
 
@@ -709,7 +1026,7 @@ createInterface({ input: process.stdin }).on("line", () => process.stdout.write(
         },
         () => Promise.resolve(undefined),
       ),
-    ).rejects.toThrow("could not start");
+    ).rejects.toThrow("unverifiable execution artifacts");
   });
 });
 
@@ -731,8 +1048,24 @@ function profileFor(
     local: {
       argv: [process.execPath, fixture, ...arguments_] as [string, ...string[]],
       secretReferences,
+      artifactAttestations: artifactAttestationsFor([
+        process.execPath,
+        fixture,
+      ]),
     },
   };
+}
+
+function artifactAttestationsFor(paths: string[]) {
+  return paths.map((path) => {
+    const resolved = realpathSync(path);
+    return {
+      path: resolved,
+      contentHash: createHash("sha256")
+        .update(readFileSync(resolved))
+        .digest("hex"),
+    };
+  });
 }
 
 async function waitForFile(path: string): Promise<void> {
@@ -748,12 +1081,19 @@ async function waitForFile(path: string): Promise<void> {
 }
 
 function socketRequest(socketPath: string, line: string): Promise<unknown> {
+  return socketRequestChunks(socketPath, [Buffer.from(`${line}\n`)]);
+}
+
+function socketRequestChunks(
+  socketPath: string,
+  chunks: readonly Buffer[],
+): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let buffer = "";
     let settled = false;
-    const socket = createConnection(socketPath, () =>
-      socket.write(`${line}\n`),
-    );
+    const socket = createConnection(socketPath, () => {
+      for (const chunk of chunks) socket.write(chunk);
+    });
     socket.on("data", (chunk: Buffer) => {
       buffer += chunk.toString("utf8");
       const newline = buffer.indexOf("\n");

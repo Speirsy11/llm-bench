@@ -110,6 +110,7 @@ describe("ExecutablePluginHarness", () => {
       argv: ["/opt/llm-bench/example-plugin", "--jsonl"],
       cwd: "/private/workspace",
       redact: ["explicit-secret"],
+      redactStdout: false,
     });
     expect(runner.request?.env).not.toHaveProperty("HOME");
     expect(runner.request?.env).not.toHaveProperty("EXAMPLE_TOKEN");
@@ -176,6 +177,126 @@ describe("ExecutablePluginHarness", () => {
     });
   });
 
+  it("recursively redacts decoded plugin output with escaped and overlapping secrets", async () => {
+    const secrets = {
+      QUOTED: 'quote"secret',
+      BACKSLASH: String.raw`backslash\secret`,
+      CONTROL: "control\nsecret\t",
+      PREFIX: "prefix",
+      LONGER: "prefix-suffix",
+    };
+    const completedRunner = new RecordingRunner([
+      {
+        kind: "handshake_reply",
+        protocolVersion: "1.0.0",
+        manifest: pluginManifest,
+      },
+      {
+        kind: "run_event",
+        protocolVersion: "1.0.0",
+        sequence: 0,
+        event: { type: "progress", message: secrets.QUOTED },
+      },
+      {
+        kind: "run_event",
+        protocolVersion: "1.0.0",
+        sequence: 1,
+        event: {
+          type: "checkpoint",
+          checkpoint: {
+            sequence: 1,
+            resumable: true,
+            state: { escaped: secrets.BACKSLASH },
+          },
+        },
+      },
+      {
+        kind: "run_result",
+        protocolVersion: "1.0.0",
+        status: "completed",
+        output: [
+          secrets.QUOTED,
+          secrets.BACKSLASH,
+          secrets.CONTROL,
+          secrets.LONGER,
+        ].join("|"),
+        observations: [{ metricId: secrets.BACKSLASH, value: 1 }],
+        checkpoint: {
+          sequence: 1,
+          resumable: true,
+          state: {
+            nested: [secrets.CONTROL, { quoted: secrets.QUOTED }],
+          },
+        },
+        metadata: { overlap: secrets.LONGER, count: 1, empty: null },
+      },
+    ]);
+
+    const completed = await new ExecutablePluginHarness(
+      {
+        argv: ["/plugin"],
+        protocolVersion: "1.0.0",
+        manifest,
+      },
+      { runner: completedRunner },
+    ).run(request(), { attemptId: ATTEMPT_ID, credentials: secrets });
+
+    expect(completed).toMatchObject({
+      output: "[REDACTED]|[REDACTED]|[REDACTED]|[REDACTED]",
+      observations: [{ metricId: "[REDACTED]", value: 1 }],
+      events: [
+        { type: "progress", message: "[REDACTED]" },
+        {
+          type: "checkpoint",
+          checkpoint: {
+            state: { escaped: "[REDACTED]" },
+          },
+        },
+      ],
+      checkpoint: {
+        state: { nested: ["[REDACTED]", { quoted: "[REDACTED]" }] },
+      },
+      metadata: { overlap: "[REDACTED]", count: 1, empty: null },
+    });
+    expect(JSON.stringify(completed)).not.toContain("-suffix");
+    for (const secret of Object.values(secrets)) {
+      expect(JSON.stringify(completed)).not.toContain(secret);
+    }
+
+    const failed = await new ExecutablePluginHarness(
+      {
+        argv: ["/plugin"],
+        protocolVersion: "1.0.0",
+        manifest,
+      },
+      {
+        runner: new RecordingRunner([
+          {
+            kind: "handshake_reply",
+            protocolVersion: "1.0.0",
+            manifest: pluginManifest,
+          },
+          {
+            kind: "run_result",
+            protocolVersion: "1.0.0",
+            status: "failed",
+            error: `failed: ${secrets.QUOTED}`,
+            checkpoint: {
+              sequence: 2,
+              resumable: false,
+              state: { escaped: secrets.BACKSLASH },
+            },
+          },
+        ]),
+      },
+    ).run(request(), { attemptId: ATTEMPT_ID, credentials: secrets });
+
+    expect(failed).toMatchObject({
+      error: "failed: [REDACTED]",
+      checkpoint: { state: { escaped: "[REDACTED]" } },
+    });
+  });
+
   it("rejects incompatible protocols and a manifest that changed after installation", async () => {
     const incompatible = new RecordingRunner([
       {
@@ -199,7 +320,7 @@ describe("ExecutablePluginHarness", () => {
         },
         { runner: incompatible },
       ).run(request(), { attemptId: ATTEMPT_ID }),
-    ).rejects.toThrow("supported major 1");
+    ).rejects.toThrow("invalid protocol output");
 
     const changed = new RecordingRunner([
       {
@@ -223,7 +344,7 @@ describe("ExecutablePluginHarness", () => {
         },
         { runner: changed },
       ).run(request(), { attemptId: ATTEMPT_ID }),
-    ).rejects.toThrow("manifest changed");
+    ).rejects.toThrow("invalid protocol output");
   });
 
   it("rejects malformed lifecycle output and failed process execution", async () => {
@@ -243,7 +364,7 @@ describe("ExecutablePluginHarness", () => {
         },
         { runner: missingResult },
       ).run(request(), { attemptId: ATTEMPT_ID }),
-    ).rejects.toThrow("exactly one terminal");
+    ).rejects.toThrow("invalid protocol output");
 
     const failed = new RecordingRunner([], {
       exitCode: 7,
@@ -271,6 +392,71 @@ describe("ExecutablePluginHarness", () => {
     ).rejects.toThrow("exited with code null");
   });
 
+  it("never exposes credentials from decode or handshake validation errors", async () => {
+    const canary = 'quote"backslash\\control\nsecret\t';
+    const malformedLine = JSON.stringify({
+      kind: "handshake_reply",
+      protocolVersion: "1.0.0",
+      manifest: pluginManifest,
+      [canary]: true,
+    });
+    const malformed = new RecordingRunner([], {
+      stdoutLines: [malformedLine],
+    });
+    const mismatched = new RecordingRunner([
+      {
+        kind: "handshake_reply",
+        protocolVersion: "1.0.0",
+        manifest: pluginManifest,
+      },
+    ]);
+
+    const errors = await Promise.all([
+      new ExecutablePluginHarness(
+        {
+          argv: ["/plugin"],
+          protocolVersion: "1.0.0",
+          manifest,
+        },
+        { runner: malformed },
+      )
+        .run(request(), {
+          attemptId: ATTEMPT_ID,
+          credentials: { CANARY: canary },
+        })
+        .catch((error: unknown) => error),
+      new ExecutablePluginHarness(
+        {
+          argv: ["/plugin"],
+          protocolVersion: "1.0.0",
+          manifest: { ...manifest, id: canary },
+        },
+        { runner: mismatched },
+      )
+        .run(request(), {
+          attemptId: ATTEMPT_ID,
+          credentials: { CANARY: canary },
+        })
+        .catch((error: unknown) => error),
+    ]);
+
+    for (const error of errors) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("invalid protocol output");
+      const exposed = JSON.stringify({
+        name: (error as Error).name,
+        message: (error as Error).message,
+        stack: (error as Error).stack,
+        cause: (error as Error & { cause?: unknown }).cause,
+      });
+      let encodedCanary = canary;
+      for (let depth = 0; depth < 3; depth += 1) {
+        expect(exposed).not.toContain(encodedCanary);
+        encodedCanary = JSON.stringify(encodedCanary).slice(1, -1);
+      }
+    }
+  });
+
   it("rejects missing, changed, and out-of-order lifecycle messages", async () => {
     const cases = [
       {
@@ -282,7 +468,7 @@ describe("ExecutablePluginHarness", () => {
             checkpoint: null,
           },
         ],
-        error: "did not begin with a handshake reply",
+        error: "invalid protocol output",
       },
       {
         messages: [
@@ -292,7 +478,7 @@ describe("ExecutablePluginHarness", () => {
             manifest: pluginManifest,
           },
         ],
-        error: "protocol changed after installation",
+        error: "invalid protocol output",
       },
       {
         messages: [
@@ -303,7 +489,7 @@ describe("ExecutablePluginHarness", () => {
           },
           { kind: "handshake_request" as const, protocolVersion: "1.0.0" },
         ],
-        error: "unexpected handshake_request",
+        error: "invalid protocol output",
       },
     ];
     for (const fixture of cases) {
@@ -317,6 +503,61 @@ describe("ExecutablePluginHarness", () => {
           { runner: new RecordingRunner(fixture.messages) },
         ).run(request(), { attemptId: ATTEMPT_ID }),
       ).rejects.toThrow(fixture.error);
+    }
+  });
+
+  it("rejects event and result protocol versions that drift after the handshake", async () => {
+    const cases = [
+      [
+        {
+          kind: "run_event" as const,
+          protocolVersion: "1.1.0",
+          sequence: 0,
+          event: { type: "started" as const },
+        },
+        {
+          kind: "run_result" as const,
+          protocolVersion: "1.0.0",
+          status: "cancelled" as const,
+          checkpoint: null,
+        },
+      ],
+      [
+        {
+          kind: "run_event" as const,
+          protocolVersion: "1.0.0",
+          sequence: 0,
+          event: { type: "started" as const },
+        },
+        {
+          kind: "run_result" as const,
+          protocolVersion: "1.1.0",
+          status: "cancelled" as const,
+          checkpoint: null,
+        },
+      ],
+    ];
+
+    for (const transcript of cases) {
+      const runner = new RecordingRunner([
+        {
+          kind: "handshake_reply",
+          protocolVersion: "1.0.0",
+          manifest: pluginManifest,
+        },
+        ...transcript,
+      ]);
+
+      await expect(
+        new ExecutablePluginHarness(
+          {
+            argv: ["/plugin"],
+            protocolVersion: "1.0.0",
+            manifest,
+          },
+          { runner },
+        ).run(request(), { attemptId: ATTEMPT_ID }),
+      ).rejects.toThrow("invalid protocol output");
     }
   });
 
@@ -375,7 +616,10 @@ let line = 0;
 createInterface({ input: process.stdin }).on("line", () => {
   line += 1;
   if (line === 1) process.stdout.write(JSON.stringify({ kind: "handshake_reply", protocolVersion: "1.0.0", manifest: ${JSON.stringify(pluginManifest)} }) + "\\n");
-  if (line === 2) process.stdout.write(JSON.stringify({ kind: "run_result", protocolVersion: "1.0.0", status: "completed", output: "real", observations: [], checkpoint: null, metadata: {} }) + "\\n");
+  if (line === 2) {
+    process.stderr.write("credential 1.0.0 kind\\n");
+    process.stdout.write(JSON.stringify({ kind: "run_result", protocolVersion: "1.0.0", status: "completed", output: "1.0.0", observations: [], checkpoint: null, metadata: { kind: "kind" } }) + "\\n");
+  }
 });`,
       { mode: 0o700 },
     );
@@ -388,8 +632,15 @@ createInterface({ input: process.stdin }).on("line", () => {
         argv: [executable],
         protocolVersion: "1.0.0",
         manifest,
-      }).run(input, { attemptId: ATTEMPT_ID }),
-    ).resolves.toMatchObject({ status: "completed", output: "real" });
+      }).run(input, {
+        attemptId: ATTEMPT_ID,
+        credentials: { PROTOCOL: "1.0.0", COMMON_KEY: "kind" },
+      }),
+    ).resolves.toMatchObject({
+      status: "completed",
+      output: "[REDACTED]",
+      metadata: { "[REDACTED]": "[REDACTED]" },
+    });
   });
 });
 

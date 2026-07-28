@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmod, mkdir } from "node:fs/promises";
+import { chmod, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { PluginMcpConnection } from "@speirsy11/llm-bench-harness-sdk";
@@ -306,6 +306,10 @@ export class TracerExecutor implements RunnerExecutor {
         const sessions: McpSessionHandle[] = [];
         const bridges: McpUnixBridge[] = [];
         const connections: PluginMcpConnection[] = [];
+        const bridgeRoot = mcpBridgeRoot(this.root, lease.attemptId);
+        let primaryError: unknown;
+        let executionFailed = false;
+        let outcome: Awaited<ReturnType<FixtureHarness["repair"]>> | undefined;
         try {
           for (const [index, reference] of selected.entries()) {
             const profile = await registry.get(reference.id);
@@ -328,7 +332,7 @@ export class TracerExecutor implements RunnerExecutor {
             const bridge = await (
               this.options.startMcpBridge ?? startMcpUnixBridge
             )(session, {
-              root: mcpBridgeRoot(this.root, lease.attemptId),
+              root: bridgeRoot,
               socketName: `${String(index)}.sock`,
             });
             bridges.push(bridge);
@@ -342,11 +346,52 @@ export class TracerExecutor implements RunnerExecutor {
               socketPath: bridge.socketPath,
             });
           }
-          return await harness.repairWithMcp(request, connections);
-        } finally {
-          await Promise.allSettled(bridges.map((bridge) => bridge.stop()));
-          await Promise.allSettled(sessions.map((session) => session.stop()));
+          outcome = await harness.repairWithMcp(request, connections);
+        } catch (error) {
+          primaryError = error;
+          executionFailed = true;
         }
+        const cleanupErrors: unknown[] = [];
+        for (const bridge of bridges.reverse()) {
+          try {
+            await bridge.stop();
+          } catch (error) {
+            cleanupErrors.push(error);
+          }
+        }
+        for (const session of sessions.reverse()) {
+          try {
+            await session.stop();
+          } catch (error) {
+            cleanupErrors.push(error);
+          }
+        }
+        try {
+          await rm(bridgeRoot, { recursive: true, force: true });
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        if (cleanupErrors.length > 0) {
+          const cleanup = new AggregateError(
+            cleanupErrors,
+            `MCP cleanup failed: ${cleanupErrors.map(describeCleanupError).join("; ")}`,
+          );
+          if (primaryError instanceof Error) {
+            primaryError.message = `${primaryError.message}; ${cleanup.message}`;
+          } else if (executionFailed) {
+            primaryError = new AggregateError(
+              [primaryError, ...cleanupErrors],
+              `MCP execution failed: ${String(primaryError)}; ${cleanup.message}`,
+            );
+          } else {
+            throw cleanup;
+          }
+        }
+        if (executionFailed) throw primaryError;
+        if (outcome === undefined) {
+          throw new Error("MCP execution did not produce an outcome.");
+        }
+        return outcome;
       },
     };
   }
@@ -415,6 +460,10 @@ export class TracerExecutor implements RunnerExecutor {
       },
     };
   }
+}
+
+function describeCleanupError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function isMcpAwareHarness(

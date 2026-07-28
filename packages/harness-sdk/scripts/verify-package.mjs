@@ -64,21 +64,26 @@ try {
     join(consumerRoot, "index.ts"),
     [
       'import type { RunRequest } from "@speirsy11/llm-bench-harness-sdk";',
+      'import { assertValidRunTranscript } from "@speirsy11/llm-bench-harness-sdk";',
       "",
       "const request: RunRequest = {",
       '  kind: "run_request",',
       '  protocolVersion: "1.0.0",',
       '  job: { id: "ba0688bb-cfd1-455f-84d4-1238d18d9967", attemptId: "d39ff38f-c09e-4afd-81f0-efa50e9f267d" },',
-      '  case: { id: "case-one", benchmarkId: "repair", benchmarkVersion: "1.0.0" },',
+      '  case: { id: "case-one", benchmarkId: "repair", benchmarkVersion: "1.0.0-rc.1+build.7" },',
       '  prompt: "Fix it",',
       '  workspace: { root: "/workspace" },',
-      '  toolset: { id: "repository", version: "1.0.0", tools: [], mcpProfiles: [] },',
+      '  toolset: { id: "repository", version: "1.0.0-rc.1+build.7", tools: [], mcpProfiles: [] },',
       "  limits: { maxDurationMs: 60_000, maxToolCalls: 100, maxTokens: 10_000, maxTurns: 10 },",
       "  checkpoint: null,",
       "  credentials: {},",
       "  runtime: { mcpConnections: [] },",
       "};",
       "",
+      "assertValidRunTranscript(",
+      '  [{ kind: "run_result", protocolVersion: "1.0.0", status: "cancelled", checkpoint: null }],',
+      '  "1.0.0",',
+      ");",
       "void request;",
       "",
     ].join("\n"),
@@ -104,11 +109,11 @@ try {
     [
       "--input-type=module",
       "--eval",
-      'import { decodeProtocolLine } from "@speirsy11/llm-bench-harness-sdk"; console.log(decodeProtocolLine(\'{"kind":"handshake_request","protocolVersion":"1.0.0"}\').kind);',
+      'import { ArtifactVersionSchema, decodeProtocolLine } from "@speirsy11/llm-bench-harness-sdk"; const kind = decodeProtocolLine(\'{"kind":"handshake_request","protocolVersion":"1.0.0"}\').kind; console.log(`${kind}:${ArtifactVersionSchema.parse("1.0.0-rc.1+build.7")}`);',
     ],
     { cwd: consumerRoot, encoding: "utf8" },
   ).trim();
-  if (output !== "handshake_request") {
+  if (output !== "handshake_request:1.0.0-rc.1+build.7") {
     throw new Error(`Packed SDK import returned unexpected output: ${output}`);
   }
 } finally {

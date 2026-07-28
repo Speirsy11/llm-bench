@@ -2,17 +2,78 @@ import { describe, expect, it } from "vitest";
 
 import type { HandshakeReply } from "./index";
 import {
+  ArtifactVersionSchema,
   assertCompatibleProtocolVersion,
   assertValidRunTranscript,
   decodeProtocolLine,
   encodeProtocolLine,
+  HandshakeRequestSchema,
   MAX_PROTOCOL_LINE_BYTES,
+  PluginCaseSchema,
+  PluginManifestSchema,
+  PluginMcpConnectionSchema,
   PluginProtocolVersionError,
+  PluginToolsetSchema,
   RunRequestSchema,
   RunResultSchema,
 } from "./index";
 
 describe("the executable plugin protocol", () => {
+  it("uses full SemVer for descriptors but strict numeric wire versions", () => {
+    const artifactVersion = "2.0.0-rc.1+build.7";
+    expect(ArtifactVersionSchema.safeParse(artifactVersion).success).toBe(true);
+    expect(ArtifactVersionSchema.safeParse("02.0.0").success).toBe(false);
+
+    expect(
+      PluginManifestSchema.safeParse({
+        id: "example-plugin",
+        name: "Example plugin",
+        version: artifactVersion,
+        capabilities: [],
+        modelRoutes: [],
+      }).success,
+    ).toBe(true);
+    expect(
+      PluginCaseSchema.safeParse({
+        id: "case-one",
+        benchmarkId: "repair",
+        benchmarkVersion: artifactVersion,
+      }).success,
+    ).toBe(true);
+    expect(
+      PluginToolsetSchema.safeParse({
+        id: "repo-tools",
+        version: artifactVersion,
+        tools: [],
+        mcpProfiles: [
+          {
+            id: "filesystem",
+            version: artifactVersion,
+            contentHash: "a".repeat(64),
+          },
+        ],
+      }).success,
+    ).toBe(true);
+    expect(
+      PluginMcpConnectionSchema.safeParse({
+        profile: {
+          id: "filesystem",
+          version: artifactVersion,
+          contentHash: "a".repeat(64),
+        },
+        transport: "unix",
+        socketPath: "/tmp/filesystem.sock",
+      }).success,
+    ).toBe(true);
+
+    expect(
+      HandshakeRequestSchema.safeParse({
+        kind: "handshake_request",
+        protocolVersion: artifactVersion,
+      }).success,
+    ).toBe(false);
+  });
+
   it("round-trips a strict handshake reply", () => {
     const reply: HandshakeReply = {
       kind: "handshake_reply",
@@ -200,79 +261,111 @@ describe("the executable plugin protocol", () => {
 
   it("accepts only contiguous events followed by exactly one terminal result", () => {
     expect(() =>
-      assertValidRunTranscript([
-        {
-          kind: "run_event",
-          protocolVersion: "1.0.0",
-          sequence: 0,
-          event: { type: "started" },
-        },
-        {
-          kind: "run_event",
-          protocolVersion: "1.0.0",
-          sequence: 1,
-          event: { type: "progress", message: "working" },
-        },
-        {
-          kind: "run_result",
-          protocolVersion: "1.0.0",
-          status: "completed",
-          output: "done",
-          observations: [],
-          checkpoint: null,
-          metadata: {},
-        },
-      ]),
+      assertValidRunTranscript(
+        [
+          {
+            kind: "run_event",
+            protocolVersion: "1.0.0",
+            sequence: 0,
+            event: { type: "started" },
+          },
+          {
+            kind: "run_event",
+            protocolVersion: "1.0.0",
+            sequence: 1,
+            event: { type: "progress", message: "working" },
+          },
+          {
+            kind: "run_result",
+            protocolVersion: "1.0.0",
+            status: "completed",
+            output: "done",
+            observations: [],
+            checkpoint: null,
+            metadata: {},
+          },
+        ],
+        "1.0.0",
+      ),
     ).not.toThrow();
-    expect(() => assertValidRunTranscript([])).toThrow("exactly one terminal");
+    expect(() => assertValidRunTranscript([], "1.0.0")).toThrow(
+      "exactly one terminal",
+    );
     expect(() =>
-      assertValidRunTranscript([
-        {
-          kind: "run_event",
-          protocolVersion: "1.0.0",
-          sequence: 1,
-          event: { type: "started" },
-        },
-        {
-          kind: "run_result",
-          protocolVersion: "1.0.0",
-          status: "cancelled",
-          checkpoint: null,
-        },
-      ]),
+      assertValidRunTranscript(
+        [
+          {
+            kind: "run_event",
+            protocolVersion: "1.0.0",
+            sequence: 1,
+            event: { type: "started" },
+          },
+          {
+            kind: "run_result",
+            protocolVersion: "1.0.0",
+            status: "cancelled",
+            checkpoint: null,
+          },
+        ],
+        "1.0.0",
+      ),
     ).toThrow("expected 0, received 1");
     expect(() =>
-      assertValidRunTranscript([
-        {
-          kind: "run_result",
-          protocolVersion: "1.0.0",
-          status: "cancelled",
-          checkpoint: null,
-        },
-        {
-          kind: "run_event",
-          protocolVersion: "1.0.0",
-          sequence: 0,
-          event: { type: "started" },
-        },
-      ]),
+      assertValidRunTranscript(
+        [
+          {
+            kind: "run_result",
+            protocolVersion: "1.0.0",
+            status: "cancelled",
+            checkpoint: null,
+          },
+          {
+            kind: "run_event",
+            protocolVersion: "1.0.0",
+            sequence: 0,
+            event: { type: "started" },
+          },
+        ],
+        "1.0.0",
+      ),
     ).toThrow("event after");
     expect(() =>
-      assertValidRunTranscript([
-        {
-          kind: "run_result",
-          protocolVersion: "1.0.0",
-          status: "cancelled",
-          checkpoint: null,
-        },
-        {
-          kind: "run_result",
-          protocolVersion: "1.0.0",
-          status: "cancelled",
-          checkpoint: null,
-        },
-      ]),
+      assertValidRunTranscript(
+        [
+          {
+            kind: "run_result",
+            protocolVersion: "1.0.0",
+            status: "cancelled",
+            checkpoint: null,
+          },
+          {
+            kind: "run_result",
+            protocolVersion: "1.0.0",
+            status: "cancelled",
+            checkpoint: null,
+          },
+        ],
+        "1.0.0",
+      ),
     ).toThrow("more than one");
+  });
+
+  it("requires every run message to retain the negotiated protocol version", () => {
+    expect(() =>
+      assertValidRunTranscript(
+        [
+          {
+            kind: "run_result",
+            protocolVersion: "1.1.0",
+            status: "cancelled",
+            checkpoint: null,
+          },
+        ],
+        "1.0.0",
+      ),
+    ).toThrow(
+      "protocol changed during execution: expected 1.0.0, received 1.1.0",
+    );
   });
 
   it("enforces a single bounded JSONL line", () => {

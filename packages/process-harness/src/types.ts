@@ -6,6 +6,8 @@ export interface ProcessRunRequest {
   signal?: AbortSignal;
   maxOutputBytes: number;
   redact?: readonly string[];
+  /** Preserve structured stdout for a caller that redacts after decoding. */
+  redactStdout?: boolean;
 }
 
 export interface ProcessRunResult {

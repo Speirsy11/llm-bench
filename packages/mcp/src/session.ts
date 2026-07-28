@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { chmod, mkdir, unlink } from "node:fs/promises";
 import { createServer } from "node:net";
 import { basename, join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import type { ChildProcess } from "node:child_process";
 import type { Server, Socket } from "node:net";
 
@@ -16,11 +17,14 @@ import type {
   McpSessionOptions,
   SecretResolver,
 } from "./types";
+import { verifyMcpProfileArtifacts } from "./registry";
 
-const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
+const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
+const DEFAULT_MAX_STDERR_BYTES = 256 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_STARTUP_TIMEOUT_MS = 5_000;
 const MAX_BRIDGE_REQUEST_BYTES = 1024 * 1024;
+const SUPPORTED_PROTOCOL_VERSIONS = new Set(["2025-06-18"]);
 
 interface PendingRequest {
   reject(error: Error): void;
@@ -52,7 +56,10 @@ export class McpSession {
   readonly #options: Required<
     Pick<
       McpSessionOptions,
-      "maxOutputBytes" | "requestTimeoutMs" | "startupTimeoutMs"
+      | "maxOutputBytes"
+      | "maxStderrBytes"
+      | "requestTimeoutMs"
+      | "startupTimeoutMs"
     >
   >;
   #capabilities: McpProbeResult | undefined;
@@ -60,14 +67,16 @@ export class McpSession {
   #closePromise: Promise<void>;
   #failure: Error | undefined;
   #resolveClosed!: () => void;
-  #outputBytes = 0;
+  #stderrBytes = 0;
   #nextRequestId = 2;
   #pending:
     | { reject(error: Error): void; resolve(result: McpProbeResult): void }
     | undefined;
   readonly #requests = new Map<number, PendingRequest>();
+  readonly #secrets: readonly string[];
   #stopPromise: Promise<void> | undefined;
   #stdout = "";
+  readonly #stdoutDecoder = new StringDecoder("utf8");
 
   constructor(
     readonly profile: McpProfile,
@@ -75,12 +84,17 @@ export class McpSession {
     options: Required<
       Pick<
         McpSessionOptions,
-        "maxOutputBytes" | "requestTimeoutMs" | "startupTimeoutMs"
+        | "maxOutputBytes"
+        | "maxStderrBytes"
+        | "requestTimeoutMs"
+        | "startupTimeoutMs"
       >
     >,
+    secrets: readonly string[],
   ) {
     this.#child = child;
     this.#options = options;
+    this.#secrets = secrets;
     this.#closePromise = new Promise((resolve) => {
       this.#resolveClosed = resolve;
     });
@@ -218,22 +232,33 @@ export class McpSession {
   }
 
   #onOutput(source: "stdout" | "stderr", chunk: Buffer): void {
-    this.#outputBytes += chunk.byteLength;
-    if (this.#outputBytes > this.#options.maxOutputBytes) {
-      this.#fail(
-        new Error(
-          `MCP server output exceeded ${this.#options.maxOutputBytes} bytes.`,
-        ),
-      );
+    if (source === "stderr") {
+      this.#stderrBytes += chunk.byteLength;
+      if (this.#stderrBytes > this.#options.maxStderrBytes) {
+        this.#fail(
+          new Error(
+            `MCP server stderr exceeded ${this.#options.maxStderrBytes} bytes.`,
+          ),
+        );
+      }
       return;
     }
-    if (source === "stderr") return;
-    this.#stdout += chunk.toString("utf8");
+    this.#stdout += this.#stdoutDecoder.write(chunk);
     const lines = this.#stdout.split(/\r?\n/u);
     const [incomplete] = lines.slice(-1) as [string];
     lines.pop();
     this.#stdout = incomplete;
-    for (const line of lines) this.#onMessage(line);
+    if (Buffer.byteLength(this.#stdout) > this.#options.maxOutputBytes) {
+      this.#fail(outputLimitError(this.#options.maxOutputBytes));
+      return;
+    }
+    for (const line of lines) {
+      if (Buffer.byteLength(line) > this.#options.maxOutputBytes) {
+        this.#fail(outputLimitError(this.#options.maxOutputBytes));
+        return;
+      }
+      this.#onMessage(line);
+    }
   }
 
   #onMessage(line: string): void {
@@ -243,7 +268,10 @@ export class McpSession {
       if (this.#pending !== undefined) {
         const id = responseId(message);
         if (id !== undefined && id !== 1) return;
-        const result = parseInitializeResult(message);
+        const result = redactValue(
+          parseInitializeResult(message),
+          this.#secrets,
+        ) as McpProbeResult;
         this.#child.stdin?.write(
           `${JSON.stringify({
             jsonrpc: "2.0",
@@ -260,25 +288,31 @@ export class McpSession {
       if (pending === undefined) return;
       const response = message as { error?: unknown; result?: unknown };
       if (response.error !== undefined) {
-        pending.reject(new Error(parseMcpError(response.error)));
+        pending.reject(
+          new Error(redactText(parseMcpError(response.error), this.#secrets)),
+        );
         return;
       }
       /* v8 ignore next -- malformed matched replies are contained by the outer failure path. */
       if (!("result" in response)) throw new Error("Invalid response.");
-      pending.resolve(response.result);
-    } catch {
+      pending.resolve(redactValue(response.result, this.#secrets));
+    } catch (error) {
       this.#fail(
-        new Error(
-          /* v8 ignore next -- generic malformed-reply wording is defensive. */
-          this.#capabilities === undefined
-            ? "MCP server returned an invalid initialize response."
-            : "MCP server returned an invalid JSON-RPC response.",
-        ),
+        error instanceof Error &&
+          error.message.startsWith("MCP server negotiated")
+          ? error
+          : new Error(
+              /* v8 ignore next -- generic malformed-reply wording is defensive. */
+              this.#capabilities === undefined
+                ? "MCP server returned an invalid initialize response."
+                : "MCP server returned an invalid JSON-RPC response.",
+            ),
       );
     }
   }
 
   #onClose(): void {
+    this.#stdout += this.#stdoutDecoder.end();
     this.#closed = true;
     this.#child.stdin?.end();
     this.#pending?.reject(
@@ -352,24 +386,75 @@ export async function startMcpSession(
   options: McpSessionOptions = {},
 ): Promise<McpSession> {
   if (options.signal?.aborted) throw new Error("MCP session was cancelled.");
-  const environment = await resolvedEnvironment(profile, resolveSecret);
-  if (options.signal?.aborted) throw new Error("MCP session was cancelled.");
-  const [command, ...args] = profile.local.argv;
-  const child = spawn(command, args, {
-    cwd: profile.local.cwd,
-    detached: true,
-    env: environment,
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  await waitForSpawn(child);
-  const session = new McpSession(profile, child, {
-    maxOutputBytes: options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
-    requestTimeoutMs: options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
-    startupTimeoutMs: options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS,
-  });
-  const onAbort = () => void session.stop();
+  let child: ChildProcess | undefined;
+  let session: McpSession | undefined;
+  let preSessionStop: Promise<void> | undefined;
+  const stopBeforeSession = (): Promise<void> => {
+    if (child === undefined) return Promise.resolve();
+    preSessionStop ??= terminateSpawnedChild(child);
+    return preSessionStop;
+  };
+  const onAbort = () => {
+    if (session !== undefined) void session.stop();
+    else void stopBeforeSession();
+  };
   options.signal?.addEventListener("abort", onAbort, { once: true });
-  return session;
+  try {
+    await verifyMcpProfileArtifacts(profile);
+    const resolved = await resolvedEnvironment(profile, resolveSecret);
+    if (options.signal?.aborted) throw new Error("MCP session was cancelled.");
+    const launch = await verifyMcpProfileArtifacts(profile);
+    if (options.signal?.aborted) throw new Error("MCP session was cancelled.");
+    const [command, ...args] = launch.argv;
+    child = spawn(command, args, {
+      cwd: launch.cwd,
+      detached: true,
+      env: resolved.environment,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    await waitForSpawn(child);
+    if (options.signal?.aborted) {
+      await stopBeforeSession();
+      throw new Error("MCP session was cancelled.");
+    }
+    session = new McpSession(
+      profile,
+      child,
+      {
+        maxOutputBytes: options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
+        maxStderrBytes: options.maxStderrBytes ?? DEFAULT_MAX_STDERR_BYTES,
+        requestTimeoutMs:
+          options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+        startupTimeoutMs:
+          options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS,
+      },
+      resolved.secrets,
+    );
+    if (options.signal?.aborted) {
+      await session.stop();
+      throw new Error("MCP session was cancelled.");
+    }
+    return session;
+  } catch (error) {
+    if (session === undefined) {
+      options.signal?.removeEventListener("abort", onAbort);
+      await stopBeforeSession();
+    }
+    throw error;
+  }
+}
+
+async function terminateSpawnedChild(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const closed = new Promise<void>((resolve) => child.once("close", resolve));
+  terminateProcessGroup(child, "SIGTERM");
+  const escalation = setTimeout(
+    () => terminateProcessGroup(child, "SIGKILL"),
+    250,
+  );
+  escalation.unref();
+  await closed;
+  clearTimeout(escalation);
 }
 
 function waitForSpawn(child: ChildProcess): Promise<void> {
@@ -391,8 +476,9 @@ function waitForSpawn(child: ChildProcess): Promise<void> {
 async function resolvedEnvironment(
   profile: McpProfile,
   resolveSecret: SecretResolver,
-): Promise<NodeJS.ProcessEnv> {
+): Promise<{ environment: NodeJS.ProcessEnv; secrets: string[] }> {
   const grants: NodeJS.ProcessEnv = {};
+  const secrets = new Set<string>();
   for (const [name, reference] of Object.entries(
     profile.local.secretReferences,
   )) {
@@ -403,8 +489,14 @@ async function resolvedEnvironment(
       );
     }
     grants[name] = secret;
+    if (secret.length > 0) secrets.add(secret);
   }
-  return isolatedProcessEnvironment(process.env, grants);
+  return {
+    environment: isolatedProcessEnvironment(process.env, grants),
+    secrets: [...secrets].sort(
+      (left, right) => right.length - left.length || left.localeCompare(right),
+    ),
+  };
 }
 
 function parseInitializeResult(value: unknown): McpProbeResult {
@@ -434,16 +526,44 @@ function parseInitializeResult(value: unknown): McpProbeResult {
   ) {
     throw new Error("Invalid response.");
   }
-  if (
-    result.protocolVersion !== undefined &&
-    typeof result.protocolVersion !== "string"
-  ) {
+  if (result.protocolVersion === undefined) {
+    throw new Error("MCP server negotiated an unsupported protocol version.");
+  }
+  if (typeof result.protocolVersion !== "string") {
     throw new Error("Invalid response.");
+  }
+  if (!SUPPORTED_PROTOCOL_VERSIONS.has(result.protocolVersion)) {
+    throw new Error("MCP server negotiated an unsupported protocol version.");
   }
   return {
     capabilities: result.capabilities as Record<string, unknown>,
     protocolVersion: result.protocolVersion,
   };
+}
+
+function outputLimitError(limit: number): Error {
+  return new Error(`MCP server output exceeded ${limit} bytes.`);
+}
+
+function redactValue(value: unknown, secrets: readonly string[]): unknown {
+  if (typeof value === "string") return redactText(value, secrets);
+  if (Array.isArray(value))
+    return value.map((item) => redactValue(item, secrets));
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      redactText(key, secrets),
+      redactValue(item, secrets),
+    ]),
+  );
+}
+
+function redactText(value: string, secrets: readonly string[]): string {
+  let redacted = value;
+  for (const secret of secrets) {
+    if (secret.length > 0) redacted = redacted.split(secret).join("[REDACTED]");
+  }
+  return redacted;
 }
 
 function responseId(value: unknown): number | undefined {
@@ -474,11 +594,21 @@ function parseMcpError(value: unknown): string {
 
 function bridgeSocket(socket: Socket, session: McpRequestSession): void {
   let buffer = "";
+  const decoder = new StringDecoder("utf8");
+  let decoderEnded = false;
+  const endDecoder = () => {
+    if (decoderEnded) return;
+    decoderEnded = true;
+    buffer += decoder.end();
+    if (Buffer.byteLength(buffer) > MAX_BRIDGE_REQUEST_BYTES) {
+      socket.destroy(new Error("MCP bridge request exceeded its size limit."));
+    }
+  };
   socket.on("error", () => {
     // The bridge contains malformed/oversized client failures per connection.
   });
   socket.on("data", (chunk: Buffer) => {
-    buffer += chunk.toString("utf8");
+    buffer += decoder.write(chunk);
     if (Buffer.byteLength(buffer) > MAX_BRIDGE_REQUEST_BYTES) {
       socket.destroy(new Error("MCP bridge request exceeded its size limit."));
       return;
@@ -491,6 +621,8 @@ function bridgeSocket(socket: Socket, session: McpRequestSession): void {
       if (line.length > 0) void forwardBridgeRequest(socket, session, line);
     }
   });
+  socket.once("end", endDecoder);
+  socket.once("close", endDecoder);
 }
 
 async function forwardBridgeRequest(

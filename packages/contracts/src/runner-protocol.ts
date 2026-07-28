@@ -4,6 +4,7 @@ import { CapabilitySchema } from "./capability";
 import { RunnerPublicKeySchema, SealedCredentialSchema } from "./credential";
 import { BenchmarkEventSchema } from "./events";
 import {
+  ArtifactVersionSchema,
   HarnessManifestSchema,
   LimitsSchema,
   ModelRouteSchema,
@@ -15,17 +16,17 @@ import { AgenticTaskSchema } from "./workload";
 export const RUNNER_PROTOCOL_VERSION = "3.0" as const;
 
 const ContentHashSchema = z.string().regex(/^[a-f0-9]{64}$/u);
-const SemanticVersionSchema = z.string().regex(/^\d+\.\d+\.\d+$/u);
+const WireProtocolVersionSchema = z.string().regex(/^\d+\.\d+\.\d+$/u);
 
 export const PluginExecutionRefSchema = z.strictObject({
-  protocolVersion: SemanticVersionSchema,
+  protocolVersion: WireProtocolVersionSchema,
   contentHash: ContentHashSchema,
 });
 
 export const RunnerInventorySchema = z.strictObject({
   plugins: z.array(
     z.strictObject({
-      protocolVersion: SemanticVersionSchema,
+      protocolVersion: WireProtocolVersionSchema,
       contentHash: ContentHashSchema,
       manifest: HarnessManifestSchema,
     }),
@@ -33,7 +34,7 @@ export const RunnerInventorySchema = z.strictObject({
   mcpProfiles: z.array(
     z.strictObject({
       id: z.string().min(1),
-      version: z.string().min(1),
+      version: ArtifactVersionSchema,
       contentHash: ContentHashSchema,
       tools: z.array(z.string().min(1)),
     }),
@@ -123,7 +124,7 @@ export const RunnerLeaseSchema = z.strictObject({
   leaseToken: z.string().min(1),
   benchmark: z.strictObject({
     id: z.string().min(1),
-    version: z.string().min(1),
+    version: ArtifactVersionSchema,
   }),
   execution: RunnerExecutionSchema,
   queuePosition: z.number().int().nonnegative(),

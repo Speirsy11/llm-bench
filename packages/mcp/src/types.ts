@@ -13,6 +13,12 @@ export interface McpProfileLocalConfig {
   argv: [string, ...string[]];
   cwd?: string;
   secretReferences: Record<string, string>;
+  artifactAttestations?: McpArtifactAttestation[];
+}
+
+export interface McpArtifactAttestation {
+  path: string;
+  contentHash: string;
 }
 
 export interface McpProfile {
@@ -31,6 +37,7 @@ export type SecretResolver = (reference: string) => Promise<string | undefined>;
 
 export interface McpSessionOptions {
   maxOutputBytes?: number;
+  maxStderrBytes?: number;
   requestTimeoutMs?: number;
   signal?: AbortSignal;
   startupTimeoutMs?: number;
@@ -38,5 +45,5 @@ export interface McpSessionOptions {
 
 export interface McpProbeResult {
   capabilities: Record<string, unknown>;
-  protocolVersion?: string;
+  protocolVersion: string;
 }

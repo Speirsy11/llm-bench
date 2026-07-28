@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ArtifactVersionSchema,
   BenchmarkManifestSchema,
   HarnessManifestSchema,
   LimitsSchema,
@@ -15,6 +16,20 @@ const passRatio = {
   unit: "fraction",
   direction: "higher_is_better" as const,
 };
+
+describe("ArtifactVersionSchema", () => {
+  it("accepts full SemVer and rejects non-canonical artifact versions", () => {
+    expect(ArtifactVersionSchema.safeParse("1.2.3-rc.1+build.7").success).toBe(
+      true,
+    );
+    expect(ArtifactVersionSchema.safeParse("1.2.3+sha.abcdef").success).toBe(
+      true,
+    );
+    expect(ArtifactVersionSchema.safeParse("01.2.3").success).toBe(false);
+    expect(ArtifactVersionSchema.safeParse("1.2").success).toBe(false);
+    expect(ArtifactVersionSchema.safeParse("1.2.3-01").success).toBe(false);
+  });
+});
 
 describe("BenchmarkManifestSchema", () => {
   it("validates a minimal response benchmark manifest", () => {
@@ -99,6 +114,49 @@ describe("ToolsetSchema", () => {
         ],
       }).success,
     ).toBe(true);
+  });
+
+  it("applies full SemVer to toolset and MCP profile versions", () => {
+    expect(
+      ToolsetSchema.safeParse({
+        id: "repo-tools",
+        version: "2.0.0-rc.1+build.7",
+        tools: ["read_file"],
+        mcpProfiles: [
+          {
+            id: "filesystem",
+            version: "1.2.0-beta.2+sha.abcdef",
+            contentHash:
+              "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          },
+        ],
+      }).success,
+    ).toBe(true);
+
+    expect(
+      ToolsetSchema.safeParse({
+        id: "repo-tools",
+        version: "02.0.0",
+        tools: [],
+        mcpProfiles: [],
+      }).success,
+    ).toBe(false);
+
+    expect(
+      ToolsetSchema.safeParse({
+        id: "repo-tools",
+        version: "2.0.0",
+        tools: [],
+        mcpProfiles: [
+          {
+            id: "filesystem",
+            version: "01.0.0",
+            contentHash:
+              "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          },
+        ],
+      }).success,
+    ).toBe(false);
   });
 });
 

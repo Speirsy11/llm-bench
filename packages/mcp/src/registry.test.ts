@@ -1,9 +1,17 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { mcpProfileContentHash, McpProfileRegistry } from "./index";
+import { McpProfileRegistry, verifyMcpProfileArtifacts } from "./index";
 
 const CONTENT_HASH = "a".repeat(64);
 
@@ -20,6 +28,8 @@ describe("McpProfileRegistry", () => {
     const root = await mkdtemp(join(tmpdir(), "llm-bench-mcp-"));
     roots.push(root);
     const registry = new McpProfileRegistry(root);
+    const server = join(root, "server.mjs");
+    await writeFile(server, "process.stdin.resume();");
 
     const profile = {
       metadata: {
@@ -33,8 +43,8 @@ describe("McpProfileRegistry", () => {
         tools: ["read_file"],
       },
       local: {
-        argv: [process.execPath, "server.mjs"] as [string, string],
-        cwd: "/opt/mcp",
+        argv: [process.execPath, server] as [string, string],
+        cwd: root,
         secretReferences: {},
       },
     };
@@ -148,12 +158,50 @@ describe("McpProfileRegistry", () => {
         metadata: { ...profile.metadata, id: "invalid", version: "v1" },
       }),
     ).rejects.toThrow("invalid");
-    await expect(registry.list()).resolves.toEqual([
-      {
-        ...profile.metadata,
-        contentHash: mcpProfileContentHash(profile),
+    const listed = await registry.list();
+    expect(listed[0]?.contentHash).toMatch(/^[a-f0-9]{64}$/u);
+    const { contentHash: _operatorHash, ...expectedMetadata } =
+      profile.metadata;
+    expect(listed).toMatchObject([expectedMetadata]);
+  });
+
+  it("uses canonical artifact SemVer for profile versions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "llm-bench-mcp-"));
+    roots.push(root);
+    const registry = new McpProfileRegistry(root);
+    const profile = {
+      metadata: {
+        protocolVersion: "1" as const,
+        id: "canonical",
+        version: "1.2.3-alpha.1+build.5",
+        label: "Canonical",
+        capabilities: [],
+        tools: [],
       },
+      local: { argv: [process.execPath] as [string], secretReferences: {} },
+    };
+
+    await registry.add(profile);
+    await expect(registry.list()).resolves.toMatchObject([
+      { version: "1.2.3-alpha.1+build.5" },
     ]);
+    for (const [index, version] of [
+      "01.2.3",
+      "1.02.3",
+      "1.2.03",
+      "1.2.3-01",
+    ].entries()) {
+      await expect(
+        registry.add({
+          ...profile,
+          metadata: {
+            ...profile.metadata,
+            id: `invalid-version-${String(index)}`,
+            version,
+          },
+        }),
+      ).rejects.toThrow("invalid");
+    }
   });
 
   it("removes a profile and reports a missing id", async () => {
@@ -264,6 +312,173 @@ describe("McpProfileRegistry", () => {
     stored[0].metadata.tools.push("tampered");
     await writeFile(path, JSON.stringify(stored));
     await expect(registry.list()).rejects.toThrow("registry is invalid");
+  });
+
+  it("attests executable scripts and rejects replacement before launch", async () => {
+    const root = await mkdtemp(join(tmpdir(), "llm-bench-mcp-"));
+    roots.push(root);
+    const script = join(root, "server.mjs");
+    await writeFile(script, "process.stdin.resume();");
+    const registry = new McpProfileRegistry(root);
+    const profile = {
+      metadata: {
+        protocolVersion: "1" as const,
+        id: "attested",
+        version: "1.0.0",
+        label: "Attested",
+        capabilities: [],
+        tools: [],
+      },
+      local: {
+        argv: [process.execPath, script] as [string, string],
+        secretReferences: {},
+      },
+    };
+
+    await registry.add(profile);
+    const installed = await registry.get("attested");
+    expect(installed.metadata.contentHash).toMatch(/^[a-f0-9]{64}$/u);
+    await writeFile(script, "process.exit(1);");
+    await expect(registry.get("attested")).rejects.toThrow(
+      "execution artifacts changed",
+    );
+    await expect(
+      registry.add({
+        ...profile,
+        metadata: { ...profile.metadata, id: "missing-script" },
+        local: {
+          ...profile.local,
+          argv: [process.execPath, join(root, "missing.mjs")],
+        },
+      }),
+    ).rejects.toThrow("cannot be attested");
+    await expect(
+      registry.add({
+        ...profile,
+        metadata: { ...profile.metadata, id: "interpreter-option" },
+        local: {
+          ...profile.local,
+          argv: [process.execPath, "--eval", "process.stdin.resume()"],
+        },
+      }),
+    ).rejects.toThrow("interpreter option");
+    await expect(
+      registry.add({
+        ...profile,
+        metadata: { ...profile.metadata, id: "env-wrapper" },
+        local: {
+          ...profile.local,
+          argv: ["/usr/bin/env", "node", script],
+        },
+      }),
+    ).rejects.toThrow("unsupported wrapper");
+    const envAlias = join(root, "apparently-native");
+    await symlink("/usr/bin/env", envAlias);
+    await expect(
+      registry.add({
+        ...profile,
+        metadata: { ...profile.metadata, id: "aliased-env-wrapper" },
+        local: {
+          ...profile.local,
+          argv: [envAlias, "-Snode", script],
+        },
+      }),
+    ).rejects.toThrow("unsupported wrapper");
+    for (const runtime of ["bun", "deno"]) {
+      const executable = join(root, runtime);
+      await writeFile(executable, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+      await expect(
+        registry.add({
+          ...profile,
+          metadata: { ...profile.metadata, id: `${runtime}-runtime` },
+          local: { ...profile.local, argv: [executable, script] },
+        }),
+      ).rejects.toThrow("unsupported interpreter");
+    }
+    const ambiguous = join(root, "custom-runtime");
+    await writeFile(ambiguous, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    await expect(
+      registry.add({
+        ...profile,
+        metadata: { ...profile.metadata, id: "ambiguous-runtime" },
+        local: { ...profile.local, argv: [ambiguous, script] },
+      }),
+    ).rejects.toThrow("ambiguous positional");
+
+    const relativeScript = join(root, "relative.mjs");
+    await writeFile(relativeScript, "process.stdin.resume();");
+    await registry.add({
+      ...profile,
+      metadata: { ...profile.metadata, id: "relative-script" },
+      local: {
+        ...profile.local,
+        argv: [process.execPath, "relative.mjs"],
+        cwd: root,
+      },
+    });
+    await expect(registry.get("relative-script")).resolves.toBeDefined();
+    await registry.add({
+      ...profile,
+      metadata: { ...profile.metadata, id: "process-relative-script" },
+      local: {
+        ...profile.local,
+        argv: [process.execPath, relative(process.cwd(), relativeScript)],
+      },
+    });
+    await expect(
+      registry.get("process-relative-script"),
+    ).resolves.toBeDefined();
+    await expect(
+      registry.add({
+        ...profile,
+        metadata: { ...profile.metadata, id: "directory-command" },
+        local: { ...profile.local, argv: [root] },
+      }),
+    ).rejects.toThrow("cannot be attested");
+
+    await expect(
+      verifyMcpProfileArtifacts({
+        metadata: {
+          protocolVersion: "1",
+          id: "unverifiable",
+          version: "1.0.0",
+          contentHash: "0".repeat(64),
+          label: "Unverifiable",
+          capabilities: [],
+          tools: [],
+        },
+        local: { argv: [process.execPath], secretReferences: {} },
+      }),
+    ).rejects.toThrow("unverifiable execution artifacts");
+
+    const deletedScript = join(root, "deleted.mjs");
+    await writeFile(deletedScript, "process.stdin.resume();");
+    await registry.add({
+      ...profile,
+      metadata: { ...profile.metadata, id: "deleted-script" },
+      local: { ...profile.local, argv: [process.execPath, deletedScript] },
+    });
+    await unlink(deletedScript);
+    await expect(registry.get("deleted-script")).rejects.toThrow(
+      "execution artifacts changed",
+    );
+
+    const firstTarget = join(root, "first-target.mjs");
+    const secondTarget = join(root, "second-target.mjs");
+    const linkedScript = join(root, "linked-server.mjs");
+    await writeFile(firstTarget, "process.stdin.resume();");
+    await writeFile(secondTarget, "process.stdin.resume();");
+    await symlink(firstTarget, linkedScript);
+    await registry.add({
+      ...profile,
+      metadata: { ...profile.metadata, id: "symlinked" },
+      local: { ...profile.local, argv: [process.execPath, linkedScript] },
+    });
+    await unlink(linkedScript);
+    await symlink(secondTarget, linkedScript);
+    await expect(registry.get("symlinked")).rejects.toThrow(
+      "execution artifacts changed",
+    );
   });
 
   it("serializes concurrent mutations without losing a profile", async () => {

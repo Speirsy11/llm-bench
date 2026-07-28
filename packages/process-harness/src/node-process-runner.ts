@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import type { ChildProcess } from "node:child_process";
 
 import type {
@@ -26,11 +27,20 @@ export class NodeProcessRunner implements ProcessRunner {
       let cancelled = request.signal?.aborted === true;
       let settled = false;
       let killTimer: ReturnType<typeof setTimeout> | null = null;
+      const stdoutDecoder = new StringDecoder("utf8");
+      const stderrDecoder = new StringDecoder("utf8");
+      let stdoutFlushed = false;
+      let stderrFlushed = false;
+      const secrets = [
+        ...new Set(
+          (request.redact ?? []).filter((secret) => secret.length > 0),
+        ),
+      ].sort((left, right) => right.length - left.length);
 
       const redact = (value: string): string => {
         let safe = value;
-        for (const secret of request.redact ?? []) {
-          if (secret.length > 0) safe = safe.replaceAll(secret, "[REDACTED]");
+        for (const secret of secrets) {
+          safe = safe.replaceAll(secret, "[REDACTED]");
         }
         return safe;
       };
@@ -58,13 +68,30 @@ export class NodeProcessRunner implements ProcessRunner {
           }
           return;
         }
-        const value = chunk.toString("utf8");
+        const value =
+          target === "stdout"
+            ? stdoutDecoder.write(chunk)
+            : stderrDecoder.write(chunk);
         if (target === "stdout") stdout += value;
         else stderr += value;
       };
 
+      const flush = (target: "stdout" | "stderr"): void => {
+        if (target === "stdout") {
+          if (stdoutFlushed) return;
+          stdoutFlushed = true;
+          stdout += stdoutDecoder.end();
+          return;
+        }
+        if (stderrFlushed) return;
+        stderrFlushed = true;
+        stderr += stderrDecoder.end();
+      };
+
       child.stdout.on("data", (chunk: Buffer) => append("stdout", chunk));
       child.stderr.on("data", (chunk: Buffer) => append("stderr", chunk));
+      child.stdout.on("end", () => flush("stdout"));
+      child.stderr.on("end", () => flush("stderr"));
       child.on("error", (error) => {
         if (!settled) {
           settled = true;
@@ -77,11 +104,16 @@ export class NodeProcessRunner implements ProcessRunner {
         if (killTimer !== null) clearTimeout(killTimer);
         request.signal?.removeEventListener("abort", onAbort);
         if (settled) return;
+        flush("stdout");
+        flush("stderr");
         settled = true;
         resolve({
           exitCode,
           signal,
-          stdoutLines: redact(stdout)
+          stdoutLines: (request.redactStdout === false
+            ? stdout
+            : redact(stdout)
+          )
             .split(/\r?\n/u)
             .filter((line) => line.length > 0),
           stderr: redact(stderr),

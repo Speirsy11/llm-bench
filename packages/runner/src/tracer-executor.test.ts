@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
+import { readFileSync, realpathSync } from "node:fs";
 import {
   access,
   chmod,
+  mkdir,
   mkdtemp,
   readFile,
   rm,
@@ -375,6 +377,89 @@ describe("TracerExecutor", () => {
     },
   );
 
+  it.each([
+    ["completed", "MCP cleanup failed"],
+    ["failed", "plugin failed; MCP cleanup failed"],
+  ] as const)(
+    "surfaces MCP cleanup failure after a %s primary outcome",
+    async (pluginStatus, expectedMessage) => {
+      const root = await temporaryRoot();
+      const lease = pluginLease();
+      lease.execution.target.harness.capabilities.push("mcp");
+      const reference = {
+        id: "cleanup",
+        version: "1.0.0",
+        contentHash: "9".repeat(64),
+      };
+      lease.execution.target.toolset.mcpProfiles = [reference];
+      const inventory = pluginInventory(lease, [{ ...reference, tools: [] }]);
+      const events: BenchmarkEvent[] = [];
+
+      const result = await new TracerExecutor(root, {
+        inventory,
+        pluginProcessRunner: new PluginProcessRunner(pluginStatus, {
+          mcp: true,
+        }),
+        pluginRegistry: {
+          resolveExecution: () =>
+            Promise.resolve({
+              ...firstPlugin(inventory),
+              argv: ["/plugin"],
+              credentialGrants: {},
+            }),
+        },
+        mcpRegistry: {
+          get: () =>
+            Promise.resolve({
+              metadata: {
+                protocolVersion: "1",
+                ...reference,
+                label: "Cleanup",
+                capabilities: [],
+                tools: [],
+              },
+              local: { argv: ["/mcp"], secretReferences: {} },
+            }),
+        },
+        startMcp: () =>
+          Promise.resolve({
+            probe: () => Promise.resolve({}),
+            request: () => Promise.resolve({}),
+            stop: () => Promise.reject(new Error("session stop failed")),
+          }),
+        startMcpBridge: async (_session, options) => {
+          await mkdir(options.root, { recursive: true });
+          await writeFile(join(options.root, "cleanup-marker"), "owned");
+          return {
+            socketPath: join(options.root, options.socketName),
+            stop: () => Promise.reject(new Error("bridge stop failed")),
+          };
+        },
+      }).execute(lease, {
+        ...context(),
+        emit: (event) => {
+          events.push(event);
+          return Promise.resolve();
+        },
+      });
+
+      expect(result.status).toBe("failed");
+      expect(JSON.stringify(events)).toContain(expectedMessage);
+      await expect(
+        access(
+          join(
+            root,
+            "mcp",
+            createHash("sha256")
+              .update(lease.attemptId)
+              .digest("hex")
+              .slice(0, 16),
+          ),
+        ),
+      ).rejects.toThrow();
+    },
+  );
+
   it("maps a cancelled plugin without an error through the harness failure boundary", async () => {
     const root = await temporaryRoot();
     const lease = pluginLease();
@@ -413,7 +498,7 @@ describe("TracerExecutor", () => {
       `import { createInterface } from "node:readline";
 createInterface({ input: process.stdin }).once("line", (line) => {
   const request = JSON.parse(line);
-  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { capabilities: {} } }) + "\\n");
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { protocolVersion: "2025-06-18", capabilities: {} } }) + "\\n");
 });`,
     );
 
@@ -444,6 +529,10 @@ createInterface({ input: process.stdin }).once("line", (line) => {
               local: {
                 argv: [process.execPath, server],
                 secretReferences: {},
+                artifactAttestations: artifactAttestationsFor([
+                  process.execPath,
+                  server,
+                ]),
               },
             }),
         },
@@ -599,6 +688,10 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
             local: {
               argv: [process.execPath, server],
               secretReferences: {},
+              artifactAttestations: artifactAttestationsFor([
+                process.execPath,
+                server,
+              ]),
             },
           }),
       },
@@ -614,7 +707,6 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
             .update(lease.attemptId)
             .digest("hex")
             .slice(0, 16),
-          "0.sock",
         ),
       ),
     ).rejects.toThrow();
@@ -1419,6 +1511,18 @@ function context(checkpoint: RunnerLease["checkpoint"] = null) {
     emit: () => Promise.resolve(),
     saveCheckpoint: () => Promise.resolve(),
   };
+}
+
+function artifactAttestationsFor(paths: string[]) {
+  return paths.map((path) => {
+    const resolved = realpathSync(path);
+    return {
+      path: resolved,
+      contentHash: createHash("sha256")
+        .update(readFileSync(resolved))
+        .digest("hex"),
+    };
+  });
 }
 
 async function llmCredential() {

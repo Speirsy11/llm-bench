@@ -34,7 +34,7 @@ describe("RunnerExtensionManager", () => {
           tools: ["read_file"],
         },
         local: {
-          argv: ["/opt/mcp"],
+          argv: [executable],
           secretReferences: {},
         },
       }),
@@ -132,7 +132,7 @@ createInterface({ input: process.stdin }).once("line", () => {
       `import { createInterface } from "node:readline";
 createInterface({ input: process.stdin }).once("line", (line) => {
   const request = JSON.parse(line);
-  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { capabilities: { tools: {} } } }) + "\\n");
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { protocolVersion: "2025-06-18", capabilities: { tools: { canary: process.env.MCP_TOKEN } } } }) + "\\n");
 });`,
     );
     await writeFile(
@@ -160,9 +160,11 @@ createInterface({ input: process.stdin }).once("line", (line) => {
     await manager.mcp.add(profilePath);
     vi.stubEnv("LLMBENCH_TEST_MCP_TOKEN", "runner-local-secret");
     await manager.mcp.grant("real-mcp", "MCP_TOKEN", "LLMBENCH_TEST_MCP_TOKEN");
-    await expect(manager.mcp.probe("real-mcp")).resolves.toEqual({
-      capabilities: { tools: {} },
-      protocolVersion: undefined,
+    const result = await manager.mcp.probe("real-mcp");
+    expect(JSON.stringify(result)).not.toContain("runner-local-secret");
+    expect(result).toEqual({
+      capabilities: { tools: { canary: "[REDACTED]" } },
+      protocolVersion: "2025-06-18",
     });
     await manager.mcp.revoke("real-mcp", "MCP_TOKEN");
   });
