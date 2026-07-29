@@ -88,6 +88,41 @@ export async function retryJobAction(formData: FormData) {
   revalidatePath("/dashboard");
 }
 
+export async function curateExperimentAction(formData: FormData) {
+  if (formData.get("curationConfirmed") !== "on") {
+    throw new Error(
+      "Confirm the sanitized publication preview before publishing.",
+    );
+  }
+  const actor = await getDashboardActor();
+  await getDashboardControlPlane().publicResults.curate(
+    actor,
+    requiredString(formData, "experimentId"),
+    requiredString(formData, "curationFingerprint"),
+  );
+  revalidatePublicResults();
+}
+
+export async function withdrawExperimentAction(formData: FormData) {
+  if (formData.get("withdrawalConfirmed") !== "on") {
+    throw new Error(
+      "Confirm the irreversible public withdrawal before continuing.",
+    );
+  }
+  const actor = await getDashboardActor();
+  await getDashboardControlPlane().publicResults.withdraw(
+    actor,
+    requiredString(formData, "experimentId"),
+  );
+  revalidatePublicResults();
+}
+
+function revalidatePublicResults(): void {
+  revalidatePath("/");
+  revalidatePath("/results");
+  revalidatePath("/dashboard");
+}
+
 function optionalString(formData: FormData, key: string): string | null {
   const value = formData.get(key);
   return typeof value === "string" && value.trim().length > 0

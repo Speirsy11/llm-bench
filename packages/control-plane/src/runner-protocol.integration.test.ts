@@ -240,8 +240,8 @@ describe("durable runner protocol", () => {
       artifacts: [
         {
           kind: "log",
-          blobPath: "blob://runner-one/attempt.log",
-          contentHash: "attempt-log-hash",
+          blobPath: `attempts/${lease.attemptId}/${"a".repeat(64)}.json`,
+          contentHash: "a".repeat(64),
           byteLength: 128,
         },
       ],
@@ -274,8 +274,8 @@ describe("durable runner protocol", () => {
       artifacts: [
         {
           kind: "log",
-          blobPath: "blob://runner-one/attempt.log",
-          contentHash: "attempt-log-hash",
+          blobPath: `attempts/${lease.attemptId}/${"a".repeat(64)}.json`,
+          contentHash: "a".repeat(64),
           byteLength: 128,
         },
       ],

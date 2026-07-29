@@ -1,5 +1,9 @@
 import Link from "next/link";
 
+import type { PublicResultSummary } from "@llm-bench/control-plane";
+
+import { PublicResultCard } from "./public-results-index";
+
 const methodology = [
   {
     eyebrow: "Primary benchmark",
@@ -21,7 +25,12 @@ const methodology = [
   },
 ] as const;
 
-export function LandingShell() {
+export function LandingShell({
+  results = [],
+}: {
+  readonly results?: readonly PublicResultSummary[];
+}) {
+  const featured = results[0] ?? null;
   return (
     <main className="bg-background text-foreground min-h-screen">
       <div className="mx-auto flex min-h-screen max-w-6xl flex-col px-6 py-8 sm:px-10 lg:px-12">
@@ -69,29 +78,35 @@ export function LandingShell() {
             </div>
           </div>
 
-          <aside className="border-border bg-card rounded-[2rem] border p-7 shadow-xl">
-            <div className="border-border flex items-center justify-between border-b pb-5">
-              <div>
-                <p className="text-sm font-medium">Curated public result</p>
-                <p className="text-muted-foreground mt-1 text-xs">
-                  Repository repair · fixture v1
-                </p>
+          {featured ? (
+            <aside>
+              <PublicResultCard result={featured} />
+            </aside>
+          ) : (
+            <aside className="border-border bg-card rounded-[2rem] border p-7 shadow-xl">
+              <div className="border-border flex items-center justify-between border-b pb-5">
+                <div>
+                  <p className="text-sm font-medium">Methodology preview</p>
+                  <p className="text-muted-foreground mt-1 text-xs">
+                    Repository repair · fixture v1
+                  </p>
+                </div>
+                <span className="bg-secondary text-secondary-foreground rounded-full px-3 py-1 font-mono text-[11px]">
+                  Fixture data
+                </span>
               </div>
-              <span className="bg-secondary text-secondary-foreground rounded-full px-3 py-1 font-mono text-[11px]">
-                SAMPLE
-              </span>
-            </div>
-            <dl className="mt-6 grid grid-cols-2 gap-4">
-              <Metric label="Hidden tests" value="6 / 6" />
-              <Metric label="Regressions" value="0" />
-              <Metric label="Duration" value="42.8s" />
-              <Metric label="Patch" value="+18 −4" />
-            </dl>
-            <p className="bg-muted text-muted-foreground mt-6 rounded-2xl p-4 font-mono text-xs leading-5">
-              Model route, harness, toolset, benchmark version, and runner
-              environment remain attached to every observation.
-            </p>
-          </aside>
+              <dl className="mt-6 grid grid-cols-2 gap-4">
+                <Metric label="Hidden tests" value="6 / 6" />
+                <Metric label="Regressions" value="0" />
+                <Metric label="Duration" value="42.8s" />
+                <Metric label="Patch" value="+18 −4" />
+              </dl>
+              <p className="bg-muted text-muted-foreground mt-6 rounded-2xl p-4 font-mono text-xs leading-5">
+                Model route, harness, toolset, benchmark version, and runner
+                environment remain attached to every observation.
+              </p>
+            </aside>
+          )}
         </section>
 
         <section
@@ -111,6 +126,37 @@ export function LandingShell() {
               </p>
             </article>
           ))}
+        </section>
+
+        <section className="py-16" id="results">
+          <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+            <div>
+              <p className="text-primary font-mono text-[11px] tracking-[0.18em] uppercase">
+                Public evidence
+              </p>
+              <h2 className="mt-4 text-3xl font-semibold tracking-tight">
+                Curated comparisons
+              </h2>
+            </div>
+            <Link
+              className="text-primary font-semibold focus-visible:outline-2 focus-visible:outline-offset-4"
+              href="/results"
+            >
+              Browse all public results →
+            </Link>
+          </div>
+          {results.length === 0 ? (
+            <p className="border-border text-muted-foreground mt-7 rounded-2xl border border-dashed p-6">
+              No curated results published yet. The fixture above demonstrates
+              the publication format without presenting it as real evidence.
+            </p>
+          ) : (
+            <div className="mt-7 grid gap-5 md:grid-cols-2">
+              {results.slice(0, 2).map((result) => (
+                <PublicResultCard key={result.id} result={result} />
+              ))}
+            </div>
+          )}
         </section>
       </div>
     </main>

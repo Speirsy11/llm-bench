@@ -13,6 +13,14 @@ describe("validateRunnerArtifactUpload", () => {
         byteLength: 42,
       }),
     ).toEqual({ maximumSizeInBytes: 42 });
+    expect(
+      validateRunnerArtifactUpload({
+        attemptId: "d0da824f-6f6a-4a01-af27-f7448d22bb39",
+        pathname: `attempts/d0da824f-6f6a-4a01-af27-f7448d22bb39/${contentHash}.json`,
+        contentHash,
+        byteLength: 42,
+      }),
+    ).toEqual({ maximumSizeInBytes: 42 });
 
     for (const invalid of [
       { pathname: `attempts/other/${contentHash}.patch` },
@@ -20,6 +28,9 @@ describe("validateRunnerArtifactUpload", () => {
         pathname: `attempts/d0da824f-6f6a-4a01-af27-f7448d22bb39/../${contentHash}.patch`,
       },
       { contentHash: "not-a-hash" },
+      {
+        pathname: `attempts/d0da824f-6f6a-4a01-af27-f7448d22bb39/${contentHash}.txt`,
+      },
       { byteLength: -1 },
       { byteLength: 10 * 1024 * 1024 + 1 },
     ]) {

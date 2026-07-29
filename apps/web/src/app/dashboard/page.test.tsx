@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   listCredentialProfiles: vi.fn(),
   listExperiments: vi.fn(),
   previewExperiment: vi.fn(),
+  previewCuration: vi.fn(),
   getDashboardActorSession: vi.fn(() =>
     Promise.resolve({
       actor: { userId: "user-1" },
@@ -27,6 +28,9 @@ vi.mock("@/app/dashboard/runtime", () => ({
       listExperiments: mocks.listExperiments,
       previewExperiment: mocks.previewExperiment,
     },
+    publicResults: {
+      previewCuration: mocks.previewCuration,
+    },
   }),
 }));
 vi.mock("@/components/dashboard-shell", () => ({
@@ -39,6 +43,7 @@ describe("dashboard page", () => {
     mocks.listCredentialProfiles.mockResolvedValue([]);
     mocks.listExperiments.mockResolvedValue([]);
     mocks.previewExperiment.mockReset();
+    mocks.previewCuration.mockReset();
   });
 
   it("renders an empty dashboard without requesting a preview", async () => {
@@ -50,6 +55,37 @@ describe("dashboard page", () => {
       runners: [],
     });
     expect(mocks.previewExperiment).not.toHaveBeenCalled();
+    expect(mocks.previewCuration).not.toHaveBeenCalled();
+  });
+
+  it("previews the exact sanitized publication snapshot for administrators", async () => {
+    const actor = { userId: "admin-1", isAdmin: true };
+    mocks.getDashboardActorSession.mockResolvedValueOnce({
+      actor,
+      session: { user: { githubLogin: "octoadmin", name: null } },
+    });
+    mocks.listExperiments.mockResolvedValueOnce([{ id: "experiment-1" }]);
+    mocks.previewCuration.mockResolvedValueOnce({
+      canPublish: true,
+      blockers: [],
+      view: { id: "experiment-1", name: "Sanitized" },
+      fingerprint: "a".repeat(64),
+    });
+
+    const element = await DashboardPage();
+    const props = element.props as {
+      curationPreviews: Record<string, unknown>;
+    };
+
+    expect(mocks.previewCuration).toHaveBeenCalledWith(actor, "experiment-1");
+    expect(props.curationPreviews).toEqual({
+      "experiment-1": {
+        canPublish: true,
+        blockers: [],
+        view: { id: "experiment-1", name: "Sanitized" },
+        fingerprint: "a".repeat(64),
+      },
+    });
   });
 
   it("previews the primary runner and credential", async () => {

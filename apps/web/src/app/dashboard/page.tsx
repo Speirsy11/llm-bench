@@ -1,9 +1,11 @@
 import type { DashboardHarnessPreviews } from "@/components/experiment-matrix";
 import {
   cancelJobAction,
+  curateExperimentAction,
   launchExperimentAction,
   retryJobAction,
   saveCredentialProfileAction,
+  withdrawExperimentAction,
 } from "@/app/dashboard/actions";
 import { getDashboardActorSession } from "@/app/dashboard/auth";
 import {
@@ -80,6 +82,22 @@ export default async function DashboardPage({
     );
     Object.assign(previews, Object.fromEntries(entries));
   }
+  const curationPreviews = actor.isAdmin
+    ? Object.fromEntries(
+        await Promise.all(
+          experiments.map(
+            async (experiment) =>
+              [
+                experiment.id,
+                await controlPlane.publicResults.previewCuration(
+                  actor,
+                  experiment.id,
+                ),
+              ] as const,
+          ),
+        ),
+      )
+    : {};
 
   return (
     <DashboardShell
@@ -97,8 +115,11 @@ export default async function DashboardPage({
         }),
       )}
       credentialProfiles={credentialProfiles}
+      curateExperimentAction={curateExperimentAction}
+      curationPreviews={curationPreviews}
       experiments={experiments}
       githubLogin={session.user.githubLogin}
+      isAdmin={actor.isAdmin}
       launchExperimentAction={launchExperimentAction}
       name={session.user.name ?? session.user.githubLogin}
       previews={previews}
@@ -106,6 +127,7 @@ export default async function DashboardPage({
       runners={runners}
       saveCredentialProfileAction={saveCredentialProfileAction}
       selectedRunnerId={selectedRunner?.id ?? null}
+      withdrawExperimentAction={withdrawExperimentAction}
     />
   );
 }

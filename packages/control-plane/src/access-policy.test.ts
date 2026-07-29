@@ -7,19 +7,32 @@ import {
 } from "./access-policy";
 
 describe("canReadExperiment", () => {
-  it("lets an anonymous visitor read public data but not private data", () => {
+  it("keeps raw experiment rows owner-only regardless of publication", () => {
     expect(
       canReadExperiment(null, {
         ownerId: "user-owner",
         visibility: "public",
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       canReadExperiment(null, {
         ownerId: "user-owner",
         visibility: "private",
       }),
     ).toBe(false);
+    expect(
+      canReadExperiment(
+        {
+          userId: "user-owner",
+          githubLogin: "owner",
+          isAdmin: false,
+        },
+        {
+          ownerId: "user-owner",
+          visibility: "public",
+        },
+      ),
+    ).toBe(true);
   });
 });
 

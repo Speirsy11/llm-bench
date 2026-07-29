@@ -1,7 +1,9 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
+import { parseWebEnv } from "@/env";
 
 import type { AuthContext } from "@llm-bench/control-plane";
+import { toAuthContext } from "@llm-bench/control-plane";
 
 export async function getDashboardActorSession() {
   const session = await auth();
@@ -10,11 +12,15 @@ export async function getDashboardActorSession() {
   }
   return {
     session,
-    actor: {
-      userId: session.user.id,
-      githubLogin: session.user.githubLogin,
-      isAdmin: false,
-    } satisfies AuthContext,
+    actor: toAuthContext(
+      {
+        user: {
+          id: session.user.id,
+          githubLogin: session.user.githubLogin,
+        },
+      },
+      parseWebEnv(process.env).adminGithubLogins,
+    ) satisfies AuthContext,
   };
 }
 
