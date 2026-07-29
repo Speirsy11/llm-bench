@@ -9,14 +9,15 @@ export interface OwnedExperiment {
   readonly visibility: "private" | "public";
 }
 
-/** Public experiments are readable by anyone; private experiments stay owner-only. */
+/**
+ * Raw experiment rows are owner-only. Anonymous public reads must use the
+ * sanitized public-result snapshot service.
+ */
 export function canReadExperiment(
   actor: AuthContext | null,
   experiment: OwnedExperiment,
 ): boolean {
-  return (
-    experiment.visibility === "public" || actor?.userId === experiment.ownerId
-  );
+  return actor?.userId === experiment.ownerId;
 }
 
 /** Experiment mutation is always owner-only, regardless of visibility. */

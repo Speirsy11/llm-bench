@@ -18,8 +18,8 @@ The product contract is in [`PRODUCT_PLAN.md`](PRODUCT_PLAN.md). Each epic below
 | [x]  | [EPIC-10](epics/EPIC-10-claude-pi-harnesses.md)        | Claude Code and Pi harnesses                      | EPIC-09                                     | `complete`    |
 | [x]  | [EPIC-10A](epics/EPIC-10A-vertical-execution.md)       | Secure target-aware vertical execution            | EPIC-05, EPIC-06, EPIC-07, EPIC-08, EPIC-09, EPIC-10 | `complete`    |
 | [x]  | [EPIC-11](epics/EPIC-11-tools-mcp-plugins.md)          | Toolsets, MCP, and plugin SDK                     | EPIC-06, EPIC-09, EPIC-10, EPIC-10A         | `complete`    |
-| [ ]  | [EPIC-12](epics/EPIC-12-response-performance.md)       | Response and performance benchmarks               | EPIC-06, EPIC-10, EPIC-10A                  | `in_review`   |
-| [ ]  | [EPIC-13](epics/EPIC-13-charts-showcase.md)            | Charts and public showcase                        | EPIC-07, EPIC-08, EPIC-10A, EPIC-11, EPIC-12 | `not_started` |
+| [x]  | [EPIC-12](epics/EPIC-12-response-performance.md)       | Response and performance benchmarks               | EPIC-06, EPIC-10, EPIC-10A                  | `complete`    |
+| [ ]  | [EPIC-13](epics/EPIC-13-charts-showcase.md)            | Charts and public showcase                        | EPIC-07, EPIC-08, EPIC-10A, EPIC-11, EPIC-12 | `in_review`   |
 | [ ]  | [EPIC-14](epics/EPIC-14-release.md)                    | Hardening, deployment, documentation, and release | EPIC-01–13                                  | `not_started` |
 
 ## Dependency graph

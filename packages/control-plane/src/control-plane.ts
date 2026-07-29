@@ -2,10 +2,12 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 
 import type { AuthContext } from "./access-policy";
+import type { PublicArtifactReader } from "./public-results";
 import type { Experiment, User } from "./schema";
-import { canCurateExperiment, canReadExperiment } from "./access-policy";
+import { canReadExperiment } from "./access-policy";
 import { createDashboardExperimentService } from "./dashboard-experiments";
 import { createDatabase } from "./database";
+import { createPublicResultService } from "./public-results";
 import { experiments, users } from "./schema";
 
 export interface GitHubIdentityInput {
@@ -18,19 +20,24 @@ export interface GitHubIdentityInput {
 
 export interface CreateExperimentInput {
   readonly name: string;
-  readonly visibility: "private" | "public";
 }
 
 export function createControlPlane({
   connectionString,
+  artifactReader,
 }: {
   readonly connectionString: string;
+  readonly artifactReader?: PublicArtifactReader;
 }) {
   const database = createDatabase(connectionString);
   const dashboard = createDashboardExperimentService(database.db);
+  const publicResults = createPublicResultService(database.db, {
+    artifactReader,
+  });
 
   return {
     dashboard,
+    publicResults,
     users: {
       async upsertGitHubIdentity(input: GitHubIdentityInput): Promise<User> {
         const [user] = await database.db
@@ -59,7 +66,11 @@ export function createControlPlane({
       ): Promise<Experiment> {
         const [experiment] = await database.db
           .insert(experiments)
-          .values({ ownerId: actor.userId, ...input })
+          .values({
+            ownerId: actor.userId,
+            name: input.name,
+            visibility: "private",
+          })
           .returning();
         // PostgreSQL INSERT ... RETURNING always yields the inserted row.
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -95,28 +106,6 @@ export function createControlPlane({
           throw new Error("Experiment is unavailable.");
         }
         return renamed;
-      },
-      async publishCurated(
-        actor: AuthContext,
-        experimentId: string,
-      ): Promise<Experiment> {
-        if (!canCurateExperiment(actor)) {
-          throw new Error("Administrator access required.");
-        }
-        const [published] = await database.db
-          .update(experiments)
-          .set({
-            visibility: "public",
-            curatedAt: new Date(),
-            curatedBy: actor.userId,
-            updatedAt: new Date(),
-          })
-          .where(eq(experiments.id, experimentId))
-          .returning();
-        if (!published) {
-          throw new Error("Experiment is unavailable.");
-        }
-        return published;
       },
     },
     close: database.close,

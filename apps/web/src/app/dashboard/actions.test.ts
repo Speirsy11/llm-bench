@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   cancelJobAction,
+  curateExperimentAction,
   launchExperimentAction,
   retryJobAction,
   saveCredentialProfileAction,
+  withdrawExperimentAction,
 } from "./actions";
 
 const saveCredentialProfile = vi.fn();
@@ -12,6 +14,8 @@ const launchExperiment = vi.fn();
 const cancelJob = vi.fn();
 const retryJob = vi.fn();
 const listRunners = vi.fn();
+const curate = vi.fn();
+const withdraw = vi.fn();
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("./auth", () => ({
@@ -31,6 +35,7 @@ vi.mock("./runtime", () => ({
       cancelJob,
       retryJob,
     },
+    publicResults: { curate, withdraw },
   }),
 }));
 
@@ -41,6 +46,8 @@ describe("dashboard credential action", () => {
     cancelJob.mockReset();
     retryJob.mockReset();
     listRunners.mockReset();
+    curate.mockReset();
+    withdraw.mockReset();
     listRunners.mockResolvedValue([
       { id: "runner-1", inventory: { plugins: [], mcpProfiles: [] } },
     ]);
@@ -106,6 +113,47 @@ describe("dashboard credential action", () => {
     await retryJobAction(job);
     expect(cancelJob).toHaveBeenCalledWith(expect.anything(), "job-1");
     expect(retryJob).toHaveBeenCalledWith(expect.anything(), "job-1");
+  });
+
+  it("delegates administrator curation and withdrawal", async () => {
+    const experiment = new FormData();
+    experiment.set("experimentId", "experiment-1");
+    experiment.set("curationConfirmed", "on");
+    experiment.set("curationFingerprint", "a".repeat(64));
+
+    await curateExperimentAction(experiment);
+    await withdrawExperimentAction(experiment);
+
+    expect(curate).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "e2e-user" }),
+      "experiment-1",
+      "a".repeat(64),
+    );
+    expect(withdraw).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "e2e-user" }),
+      "experiment-1",
+    );
+  });
+
+  it("rejects publication without explicit sanitized-preview confirmation", async () => {
+    const experiment = new FormData();
+    experiment.set("experimentId", "experiment-1");
+
+    await expect(curateExperimentAction(experiment)).rejects.toThrow(
+      "Confirm the sanitized publication preview before publishing.",
+    );
+    expect(curate).not.toHaveBeenCalled();
+  });
+
+  it("rejects publication without the reviewed snapshot fingerprint", async () => {
+    const experiment = new FormData();
+    experiment.set("experimentId", "experiment-1");
+    experiment.set("curationConfirmed", "on");
+
+    await expect(curateExperimentAction(experiment)).rejects.toThrow(
+      "curationFingerprint is required.",
+    );
+    expect(curate).not.toHaveBeenCalled();
   });
 
   it("launches a selected native harness without a hosted credential", async () => {

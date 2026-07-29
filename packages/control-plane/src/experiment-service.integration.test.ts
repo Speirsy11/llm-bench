@@ -29,7 +29,7 @@ afterAll(async () => {
 });
 
 describe("experiment visibility", () => {
-  it("returns public data to an anonymous visitor without exposing private data", async () => {
+  it("starts every user-created experiment private", async () => {
     const owner = await controlPlane.users.upsertGitHubIdentity({
       githubId: "1001",
       githubLogin: "owner",
@@ -41,21 +41,19 @@ describe("experiment visibility", () => {
       isAdmin: false,
     };
 
-    const publicExperiment = await controlPlane.experiments.create(actor, {
-      name: "Public comparison",
-      visibility: "public",
-    });
     const privateExperiment = await controlPlane.experiments.create(actor, {
       name: "Private comparison",
-      visibility: "private",
     });
 
     await expect(
-      controlPlane.experiments.get(null, publicExperiment.id),
-    ).resolves.toMatchObject({ name: "Public comparison" });
-    await expect(
       controlPlane.experiments.get(null, privateExperiment.id),
     ).resolves.toBeNull();
+    await expect(
+      controlPlane.experiments.get(actor, privateExperiment.id),
+    ).resolves.toMatchObject({
+      name: "Private comparison",
+      visibility: "private",
+    });
   });
 
   it("denies another user read and mutation access to a private experiment", async () => {
@@ -81,7 +79,6 @@ describe("experiment visibility", () => {
     };
     const experiment = await controlPlane.experiments.create(ownerActor, {
       name: "Owner draft",
-      visibility: "private",
     });
 
     await expect(
@@ -98,52 +95,6 @@ describe("experiment visibility", () => {
         ownerActor,
         "00000000-0000-0000-0000-000000000000",
         "Missing",
-      ),
-    ).rejects.toThrow("Experiment is unavailable.");
-  });
-
-  it("allows only an administrator to curate an experiment for public access", async () => {
-    const owner = await controlPlane.users.upsertGitHubIdentity({
-      githubId: "3001",
-      githubLogin: "curation-owner",
-      name: "Curation Owner",
-    });
-    const administrator = await controlPlane.users.upsertGitHubIdentity({
-      githubId: "3002",
-      githubLogin: "octoadmin",
-      name: "Administrator",
-    });
-    const ownerActor = {
-      userId: owner.id,
-      githubLogin: owner.githubLogin,
-      isAdmin: false,
-    };
-    const adminActor = {
-      userId: administrator.id,
-      githubLogin: administrator.githubLogin,
-      isAdmin: true,
-    };
-    const experiment = await controlPlane.experiments.create(ownerActor, {
-      name: "Candidate result",
-      visibility: "private",
-    });
-
-    await expect(
-      controlPlane.experiments.publishCurated(ownerActor, experiment.id),
-    ).rejects.toThrow("Administrator access required.");
-    await expect(
-      controlPlane.experiments.publishCurated(adminActor, experiment.id),
-    ).resolves.toMatchObject({
-      visibility: "public",
-      curatedBy: administrator.id,
-    });
-    await expect(
-      controlPlane.experiments.get(null, experiment.id),
-    ).resolves.toMatchObject({ name: "Candidate result" });
-    await expect(
-      controlPlane.experiments.publishCurated(
-        adminActor,
-        "00000000-0000-0000-0000-000000000000",
       ),
     ).rejects.toThrow("Experiment is unavailable.");
   });

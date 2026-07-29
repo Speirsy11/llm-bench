@@ -12,6 +12,7 @@ import type {
 import { RunnerExecutionSchema } from "@llm-bench/contracts";
 
 import type { PairedRunner } from "./runner-protocol";
+import { validateRunnerArtifactUpload } from "./runner-artifacts";
 
 export interface QueuedRunnerJob {
   id: string;
@@ -277,6 +278,14 @@ export function createRunnerJobService({
       request: RunnerTerminalRequest,
     ): Promise<void> {
       const attempt = await authorizeAttempt(store, runner, request);
+      for (const artifact of request.artifacts) {
+        validateRunnerArtifactUpload({
+          attemptId: attempt.id,
+          pathname: artifact.blobPath,
+          contentHash: artifact.contentHash,
+          byteLength: artifact.byteLength,
+        });
+      }
       const terminal = {
         attemptId: request.attemptId,
         status: request.status,

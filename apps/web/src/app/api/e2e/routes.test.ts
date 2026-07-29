@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as persistence } from "./persistence/route";
 import { POST as reset } from "./reset/route";
 import { GET as session } from "./session/route";
+import { POST as showcase } from "./showcase/route";
 
 const mocks = vi.hoisted(() => ({
   close: vi.fn(),
@@ -17,10 +18,11 @@ const mocks = vi.hoisted(() => ({
   createAuthAdapter: vi.fn(),
   requireTestDatabaseUrl: vi.fn((value: string) => value),
   parseWebEnv: vi.fn(() => ({ databaseUrl: "postgresql://test/e2e_test" })),
+  rejectUnauthorized: vi.fn(() => null as Response | null),
 }));
 
 vi.mock("./guard", () => ({
-  rejectUnauthorizedE2eRequest: () => null,
+  rejectUnauthorizedE2eRequest: mocks.rejectUnauthorized,
   requireTestDatabaseUrl: mocks.requireTestDatabaseUrl,
 }));
 vi.mock("@/env", () => ({ parseWebEnv: mocks.parseWebEnv }));
@@ -49,6 +51,7 @@ describe("authorized E2E fixture routes", () => {
     mocks.deleteSession.mockReset().mockResolvedValue(undefined);
     mocks.createSession.mockReset().mockResolvedValue(undefined);
     mocks.requireTestDatabaseUrl.mockClear();
+    mocks.rejectUnauthorized.mockReset().mockReturnValue(null);
     mocks.createAuthAdapter.mockReset().mockReturnValue({
       deleteSession: mocks.deleteSession,
       createSession: mocks.createSession,
@@ -108,5 +111,37 @@ describe("authorized E2E fixture routes", () => {
       "postgresql://test/e2e_test",
     );
     expect(mocks.close).toHaveBeenCalledTimes(2);
+  });
+
+  it("seeds only a sanitized public showcase snapshot", async () => {
+    const response = await showcase(
+      new Request("http://example.test", { method: "POST" }),
+    );
+
+    await expect(response.json()).resolves.toEqual({
+      experimentId: "13000000-0000-4000-8000-000000000013",
+    });
+    expect(mocks.unsafe).toHaveBeenCalledTimes(2);
+    expect(mocks.unsafe.mock.calls[1]?.[0]).toContain(
+      "insert into experiments",
+    );
+    const serializedArguments = JSON.stringify(mocks.unsafe.mock.calls);
+    expect(serializedArguments).not.toContain("/Users/");
+    expect(serializedArguments).not.toContain("private prompt");
+    expect(serializedArguments).not.toContain("sk-");
+    expect(mocks.close).toHaveBeenCalledOnce();
+  });
+
+  it("rejects unauthorized showcase fixture requests before database access", async () => {
+    mocks.rejectUnauthorized.mockReturnValueOnce(
+      new Response(null, { status: 404 }),
+    );
+
+    const response = await showcase(
+      new Request("http://example.test", { method: "POST" }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(mocks.createDatabase).not.toHaveBeenCalled();
   });
 });

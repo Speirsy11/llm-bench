@@ -2,20 +2,41 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getDashboardActor, getDashboardActorSession } from "./auth";
 
-const { auth, redirect } = vi.hoisted(() => ({
+const { auth, parseWebEnv, redirect } = vi.hoisted(() => ({
   auth: vi.fn(),
+  parseWebEnv: vi.fn(),
   redirect: vi.fn(),
 }));
 
 vi.mock("@/auth", () => ({ auth }));
+vi.mock("@/env", () => ({ parseWebEnv }));
 vi.mock("next/navigation", () => ({ redirect }));
 
 describe("dashboard auth", () => {
   beforeEach(() => {
     auth.mockReset();
+    parseWebEnv.mockReset();
+    parseWebEnv.mockReturnValue({ adminGithubLogins: [] });
     redirect.mockReset();
     redirect.mockImplementation(() => {
       throw new Error("NEXT_REDIRECT");
+    });
+  });
+
+  it("derives administrator status from the configured GitHub allowlist", async () => {
+    parseWebEnv.mockReturnValue({ adminGithubLogins: ["octoadmin"] });
+    auth.mockResolvedValue({
+      user: {
+        id: "user-admin",
+        githubLogin: "OctoAdmin",
+        name: "Admin",
+      },
+    });
+
+    await expect(getDashboardActor()).resolves.toEqual({
+      userId: "user-admin",
+      githubLogin: "OctoAdmin",
+      isAdmin: true,
     });
   });
 

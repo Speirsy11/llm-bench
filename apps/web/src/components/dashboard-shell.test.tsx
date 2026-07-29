@@ -24,6 +24,8 @@ describe("DashboardShell", () => {
           {
             id: "experiment-1",
             name: "Repository repair",
+            visibility: "private",
+            curatedAt: null,
             progress: {
               totalJobs: 1,
               queuedJobs: 0,
@@ -179,6 +181,8 @@ describe("DashboardShell", () => {
     expect(html).toContain("projected job");
     expect(html).toContain("Hidden test pass ratio");
     expect(html).toContain("repository-repair · workspace target");
+    expect(html).toContain("Open charts and evidence");
+    expect(html).toContain('href="/dashboard/results/experiment-1"');
     expect(html).toMatch(
       new RegExp("Hidden test pass ratio:[\\s\\S]*>1</span>"),
     );
@@ -256,6 +260,8 @@ describe("DashboardShell", () => {
           {
             id: "experiment-2",
             name: "Blocked repair",
+            visibility: "private",
+            curatedAt: null,
             progress: {
               totalJobs: 3,
               queuedJobs: 1,
@@ -355,6 +361,186 @@ describe("DashboardShell", () => {
     expect(html).toContain("Retry");
     expect(html).toContain("unknown");
     expect(html).toContain("cancelled · retry");
+    expect(html).not.toContain("Open charts and evidence");
+  });
+
+  it("shows the administrator-only curation workflow and privacy report", () => {
+    const html = renderToStaticMarkup(
+      <DashboardShell
+        credentialProfiles={[]}
+        curateExperimentAction={() => undefined}
+        curationPreviews={{
+          "experiment-public-candidate": {
+            canPublish: true,
+            blockers: [],
+            fingerprint: "a".repeat(64),
+            view: {
+              schemaVersion: 1,
+              id: "experiment-public-candidate",
+              name: "Candidate [redacted-user]",
+              createdAt: "2026-07-28T10:00:00.000Z",
+              curatedAt: "2026-07-28T12:00:00.000Z",
+              comparisonGroups: [
+                {
+                  key: "comparison-safe-123",
+                  benchmark: {
+                    id: "structured-output",
+                    version: "1.0.0",
+                    caseId: "customer-record",
+                    language: "typescript",
+                  },
+                  environment: {
+                    os: "darwin",
+                    architecture: "arm64",
+                    cpuClass: "apple-silicon",
+                    memoryMb: 32768,
+                    runtimeVersions: { node: "22.21.0" },
+                    harnessVersions: { llmbench: "1.0.0" },
+                    sandboxMode: "workspace-write",
+                  },
+                  comparison: {
+                    changedDimensions: ["model"],
+                    rankingEligible: true,
+                  },
+                  warnings: ["One result has partial artifact evidence."],
+                  series: [
+                    {
+                      id: "result-safe-1",
+                      jobId: "job-safe-1",
+                      createdAt: "2026-07-28T11:00:00.000Z",
+                      label: "OpenRouter Alpha",
+                      target: {
+                        model: {
+                          provider: "openrouter",
+                          id: "openai/gpt-alpha",
+                        },
+                        harness: { id: "llmbench", version: "1.0.0" },
+                        toolset: {
+                          id: "response",
+                          version: "1.0.0",
+                          tools: ["structured-output"],
+                          mcpProfiles: [
+                            { id: "public-docs", version: "2.0.0" },
+                          ],
+                        },
+                      },
+                      primaryMetric: {
+                        id: "schema_compliance",
+                        label: "Schema compliance",
+                        kind: "ratio",
+                        unit: "ratio",
+                        direction: "higher_is_better",
+                        value: 1,
+                        missing: false,
+                      },
+                      metrics: [
+                        {
+                          id: "schema_compliance",
+                          label: "Schema compliance",
+                          kind: "ratio",
+                          unit: "ratio",
+                          direction: "higher_is_better",
+                          value: 1,
+                          missing: false,
+                        },
+                      ],
+                      artifactSummary: {
+                        withheldCount: 2,
+                        kinds: ["response_evidence"],
+                        totalBytes: 2048,
+                      },
+                      samples: [
+                        {
+                          index: 0,
+                          observations: [
+                            { metricId: "schema_compliance", value: 1 },
+                          ],
+                        },
+                      ],
+                      sampleCount: 1,
+                      status: "completed",
+                      rank: 1,
+                    },
+                  ],
+                },
+              ],
+              languageBreakdown: [{ language: "typescript", resultCount: 1 }],
+              warnings: ["Public snapshot warning."],
+              sanitization: {
+                withheldArtifactCount: 2,
+                redactedFields: ["experiment.name"],
+                excludedFields: ["workload.prompt", "credential"],
+              },
+            },
+          },
+        }}
+        experiments={[
+          {
+            id: "experiment-public-candidate",
+            name: "Candidate comparison",
+            visibility: "private",
+            curatedAt: null,
+            progress: {
+              totalJobs: 1,
+              queuedJobs: 0,
+              runningJobs: 0,
+              completedJobs: 1,
+              failedJobs: 0,
+              cancelledJobs: 0,
+              interruptedJobs: 0,
+            },
+            jobs: [completedJobFixture()],
+          },
+          {
+            id: "experiment-public",
+            name: "Published comparison",
+            visibility: "public",
+            curatedAt: new Date("2026-07-28T12:00:00.000Z"),
+            progress: {
+              totalJobs: 1,
+              queuedJobs: 0,
+              runningJobs: 0,
+              completedJobs: 1,
+              failedJobs: 0,
+              cancelledJobs: 0,
+              interruptedJobs: 0,
+            },
+            jobs: [completedJobFixture()],
+          },
+        ]}
+        githubLogin="octoadmin"
+        isAdmin
+        name="Admin"
+        previews={{}}
+        runners={[]}
+        withdrawExperimentAction={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Public curation");
+    expect(html).toContain("Publish curated result");
+    expect(html).toContain("Sanitized publication preview");
+    expect(html).toContain("Candidate [redacted-user]");
+    expect(html).toContain("Withheld artifacts");
+    expect(html).toContain("experiment.name");
+    expect(html).toContain("comparison-safe-123");
+    expect(html).toContain("customer-record");
+    expect(html).toContain("apple-silicon");
+    expect(html).toContain("node=22.21.0");
+    expect(html).toContain("llmbench=1.0.0");
+    expect(html).toContain("openai/gpt-alpha");
+    expect(html).toContain("public-docs · 2.0.0");
+    expect(html).toContain("schema_compliance=1");
+    expect(html).toContain("response_evidence");
+    expect(html).toContain("Public snapshot warning.");
+    expect(html).toContain("I reviewed this sanitized preview");
+    expect(html).toContain('name="curationConfirmed"');
+    expect(html).toContain('name="curationFingerprint"');
+    expect(html).toContain(`value="${"a".repeat(64)}"`);
+    expect(html).toContain("workload.prompt, credential");
+    expect(html).toContain("Private prompts and artifacts are withheld");
+    expect(html).toContain('href="/results/experiment-public"');
+    expect(html).toContain("Withdraw from public");
   });
 });
 
@@ -510,5 +696,47 @@ function jobFixture({
       },
     },
     primaryMetric,
+  };
+}
+
+function completedJobFixture() {
+  return {
+    id: "job-completed",
+    status: "completed" as const,
+    retryOfJobId: null,
+    cancellationRequested: false,
+    benchmark: {
+      id: "repository-repair",
+      kind: "agentic" as const,
+      targetKind: "workspace" as const,
+    },
+    target: {
+      position: 0,
+      modelRoute: {
+        id: "openrouter-gpt-4o",
+        provider: "openrouter",
+        model: "openai/gpt-4o",
+      },
+      harness: {
+        id: "llmbench",
+        version: "1.0.0",
+        capabilities: ["workspaces", "files"] as ("workspaces" | "files")[],
+        modelRoutes: [],
+      },
+      toolset: {
+        id: "builtin",
+        version: "1.0.0",
+        tools: [],
+        mcpProfiles: [],
+      },
+    },
+    primaryMetric: {
+      id: "hidden_test_pass_ratio",
+      label: "Hidden test pass ratio",
+      kind: "ratio" as const,
+      unit: "ratio",
+      direction: "higher_is_better" as const,
+      value: 1,
+    },
   };
 }

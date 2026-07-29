@@ -1,6 +1,10 @@
 import { parseWebEnv } from "@/env";
+import { get } from "@vercel/blob";
 
-import { createControlPlane } from "@llm-bench/control-plane";
+import {
+  createControlPlane,
+  PublicArtifactReader,
+} from "@llm-bench/control-plane";
 
 type DashboardControlPlane = ReturnType<typeof createControlPlane>;
 
@@ -12,10 +16,21 @@ export function getDashboardControlPlane(): DashboardControlPlane {
     const env = parseWebEnv(process.env);
     dashboardControlPlane = createControlPlane({
       connectionString: env.databaseUrl,
+      artifactReader: new VercelPrivateArtifactReader(),
     });
     registerShutdown();
   }
   return dashboardControlPlane;
+}
+
+class VercelPrivateArtifactReader extends PublicArtifactReader {
+  async read(pathname: string): Promise<Uint8Array> {
+    const result = await get(pathname, { access: "private" });
+    if (result?.statusCode !== 200) {
+      throw new Error("Private artifact is unavailable.");
+    }
+    return new Uint8Array(await new Response(result.stream).arrayBuffer());
+  }
 }
 
 function registerShutdown(): void {

@@ -21,6 +21,7 @@
     "lint:ws": "pnpm dlx sherif@1.13.0",
     "postinstall": "pnpm lint:ws",
     "test": "turbo run test",
+    "test:a11y": "playwright test --config=playwright.a11y.config.ts --workers=1",
     "test:coverage": "turbo run test:coverage",
     "test:e2e": "turbo run build --filter=@speirsy11/llm-bench-runner... && playwright test --workers=1",
     "test:fixtures": "pnpm --filter @llm-bench/repository-repair test",
@@ -33,6 +34,7 @@
     "@llm-bench/prettier-config": "workspace:*",
     "@playwright/test": "^1.61.1",
     "@turbo/gen": "^2.5.8",
+    "axe-core": "4.10.0",
     "prettier": "catalog:",
     "turbo": "^2.5.8",
     "typescript": "catalog:"

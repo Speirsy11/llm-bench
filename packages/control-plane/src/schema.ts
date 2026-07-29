@@ -23,6 +23,8 @@ import type {
   RunnerInventory,
 } from "@llm-bench/contracts";
 
+import type { PublicExperimentView } from "./public-results";
+
 export const experimentVisibility = pgEnum("experiment_visibility", [
   "private",
   "public",
@@ -183,12 +185,13 @@ export const experiments = pgTable(
     visibility: experimentVisibility().default("private").notNull(),
     curatedAt: timestamp("curated_at", { withTimezone: true }),
     curatedBy: text("curated_by").references(() => users.id, {
-      onDelete: "set null",
+      onDelete: "restrict",
     }),
     configurationSnapshot: jsonb("configuration_snapshot")
       .$type<Record<string, unknown>>()
       .default({})
       .notNull(),
+    publicSnapshot: jsonb("public_snapshot").$type<PublicExperimentView>(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -199,6 +202,10 @@ export const experiments = pgTable(
   (table) => [
     index("experiments_owner_id_index").on(table.ownerId),
     index("experiments_visibility_index").on(table.visibility),
+    check(
+      "experiments_public_snapshot_check",
+      sql`${table.visibility} <> 'public' or (${table.curatedAt} is not null and ${table.curatedBy} is not null and ${table.publicSnapshot} is not null)`,
+    ),
   ],
 );
 

@@ -99,6 +99,8 @@ export interface LaunchedExperiment {
 export interface DashboardExperimentDetail {
   readonly id: string;
   readonly name: string;
+  readonly visibility: "private" | "public";
+  readonly curatedAt: Date | null;
   readonly progress: {
     readonly totalJobs: number;
     readonly queuedJobs: number;
@@ -422,6 +424,8 @@ export function createDashboardExperimentService(db: Database) {
       return {
         id: experiment.id,
         name: experiment.name,
+        visibility: experiment.visibility,
+        curatedAt: experiment.curatedAt,
         progress: progressFor(detailJobs),
         jobs: detailJobs,
       };

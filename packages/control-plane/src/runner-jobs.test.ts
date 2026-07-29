@@ -320,6 +320,42 @@ describe("runner job leasing", () => {
     ).rejects.toThrow("Attempt is already terminal.");
   });
 
+  it("rejects a terminal artifact reference owned by another attempt", async () => {
+    const service = createRunnerJobService({
+      store: createInMemoryRunnerJobStore(),
+      randomToken: () => "lease-token",
+    });
+    await service.enqueue({
+      ownerId: "owner-1",
+      benchmark: { id: "repository-repair", version: "1.0.0" },
+      requiredCapabilities: ["workspaces", "files"],
+      execution,
+    });
+    const pairedRunner = runner("runner-1");
+    const lease = await service.lease(pairedRunner);
+    if (!lease) throw new Error("Expected a lease.");
+    const contentHash = "a".repeat(64);
+
+    await expect(
+      service.complete(pairedRunner, {
+        protocolVersion: "3.0",
+        attemptId: lease.attemptId,
+        leaseToken: lease.leaseToken,
+        status: "completed",
+        observations: [],
+        artifacts: [
+          {
+            kind: "response_evidence",
+            blobPath: `attempts/another-attempt/${contentHash}.json`,
+            contentHash,
+            byteLength: 42,
+          },
+        ],
+        error: null,
+      }),
+    ).rejects.toThrow("Artifact upload is invalid.");
+  });
+
   it("exposes owner cancellation and the latest resumable checkpoint", async () => {
     const store = createInMemoryRunnerJobStore();
     const service = createRunnerJobService({

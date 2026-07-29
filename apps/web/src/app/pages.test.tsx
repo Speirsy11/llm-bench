@@ -1,3 +1,4 @@
+import { isValidElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import RunnerPairingPage from "./dashboard/runners/pair/page";
@@ -7,6 +8,7 @@ import HomePage from "./page";
 
 const mocks = vi.hoisted(() => ({
   notFound: vi.fn(),
+  list: vi.fn(),
   redirect: vi.fn(),
 }));
 
@@ -17,15 +19,34 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/components/landing-shell", () => ({
   LandingShell: () => "landing",
 }));
+vi.mock("@/app/dashboard/runtime", () => ({
+  getDashboardControlPlane: () => ({
+    publicResults: { list: mocks.list },
+  }),
+}));
 vi.mock("@/components/runner-pairing-form", () => ({
   RunnerPairingForm: () => "pairing-form",
 }));
 
 describe("app pages", () => {
-  it("renders the root, home, and pairing page elements", () => {
+  it("renders the root, curated home, and pairing page elements", async () => {
+    mocks.list.mockResolvedValue([
+      {
+        id: "public-1",
+        name: "Public comparison",
+        benchmarkIds: ["performance"],
+        resultCount: 2,
+        curatedAt: "2026-07-28T12:00:00.000Z",
+      },
+    ]);
     expect(metadata.title).toBe("LLMBench");
     expect(RootLayout({ children: "child" }).type).toBe("html");
-    expect(HomePage().type).toBeTypeOf("function");
+    const home = await HomePage();
+    expect(isValidElement<{ results: readonly unknown[] }>(home)).toBe(true);
+    if (!isValidElement<{ results: readonly unknown[] }>(home)) {
+      throw new Error("Expected HomePage to return a React element.");
+    }
+    expect(home.props.results).toHaveLength(1);
     expect(RunnerPairingPage().type).toBe("main");
   });
 
