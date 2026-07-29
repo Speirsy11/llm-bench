@@ -254,6 +254,13 @@ describe("PublicResultShell", () => {
             },
             {
               ...first,
+              id: "alpha-small-improvement",
+              jobId: "job-alpha-small-improvement",
+              createdAt: "2026-07-04T11:00:00.000Z",
+              primaryMetric: { ...first.primaryMetric, value: 1.004 },
+            },
+            {
+              ...first,
               id: "alpha-regressed",
               jobId: "job-alpha-regressed",
               createdAt: "2026-07-05T10:00:00.000Z",
@@ -275,10 +282,11 @@ describe("PublicResultShell", () => {
 
     const html = renderToStaticMarkup(<PublicResultShell result={repeated} />);
 
-    expect(html).toContain("4 chronological aggregate results");
+    expect(html).toContain("5 chronological aggregate results");
     expect(html).toContain("+25% · improved");
     expect(html).toContain("0% · unchanged");
-    expect(html).toContain("-50% · regressed");
+    expect(html).toContain("+0.4% · improved");
+    expect(html).toContain("-50.4% · regressed");
     expect(html).toContain("2.0 MB");
     expect(html).toContain("Not reported");
     expect(html).toContain("p/x");

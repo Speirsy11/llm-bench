@@ -85,6 +85,9 @@ describe("public result pages", () => {
       throw new Error("Expected ResultsLoading to return a React element.");
     }
     expect(loading.props["aria-label"]).toBe("Loading public results");
+    expect(renderToStaticMarkup(loading)).toContain(
+      "motion-reduce:animate-none",
+    );
   });
 
   it("renders an accessible recoverable error state without private detail", () => {

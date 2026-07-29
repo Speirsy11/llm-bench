@@ -120,6 +120,7 @@ describe("dashboard credential action", () => {
     experiment.set("experimentId", "experiment-1");
     experiment.set("curationConfirmed", "on");
     experiment.set("curationFingerprint", "a".repeat(64));
+    experiment.set("withdrawalConfirmed", "on");
 
     await curateExperimentAction(experiment);
     await withdrawExperimentAction(experiment);
@@ -143,6 +144,16 @@ describe("dashboard credential action", () => {
       "Confirm the sanitized publication preview before publishing.",
     );
     expect(curate).not.toHaveBeenCalled();
+  });
+
+  it("rejects withdrawal without explicit confirmation", async () => {
+    const experiment = new FormData();
+    experiment.set("experimentId", "experiment-1");
+
+    await expect(withdrawExperimentAction(experiment)).rejects.toThrow(
+      "Confirm the irreversible public withdrawal before continuing.",
+    );
+    expect(withdraw).not.toHaveBeenCalled();
   });
 
   it("rejects publication without the reviewed snapshot fingerprint", async () => {

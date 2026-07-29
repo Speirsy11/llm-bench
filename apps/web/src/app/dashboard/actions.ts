@@ -104,6 +104,11 @@ export async function curateExperimentAction(formData: FormData) {
 }
 
 export async function withdrawExperimentAction(formData: FormData) {
+  if (formData.get("withdrawalConfirmed") !== "on") {
+    throw new Error(
+      "Confirm the irreversible public withdrawal before continuing.",
+    );
+  }
   const actor = await getDashboardActor();
   await getDashboardControlPlane().publicResults.withdraw(
     actor,

@@ -1227,8 +1227,24 @@ function metricDelta(
       : difference > 0 === (current.direction === "higher_is_better")
         ? "improved"
         : "regressed";
-  const sign = difference > 0 ? "+" : "";
-  return `${sign}${formatMetric(current, difference)} · ${improved}`;
+  return `${formatMetricDelta(current, difference)} · ${improved}`;
+}
+
+function formatMetricDelta(
+  metric: PublicMetricValue,
+  difference: number,
+): string {
+  const sign = difference > 0 ? "+" : difference < 0 ? "-" : "";
+  const magnitude = Math.abs(difference);
+  if (metric.kind === "ratio") {
+    return `${sign}${(magnitude * 100).toLocaleString(undefined, {
+      maximumFractionDigits: 2,
+    })}%`;
+  }
+  if (metric.kind === "currency") {
+    return `${sign}$${magnitude.toFixed(4)}`;
+  }
+  return `${sign}${formatMetric(metric, magnitude)}`;
 }
 
 function formatBytes(value: number): string {

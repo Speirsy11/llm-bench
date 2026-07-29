@@ -507,6 +507,22 @@ describe("DashboardShell", () => {
             },
             jobs: [completedJobFixture()],
           },
+          {
+            id: "experiment-withdrawn",
+            name: "Withdrawn comparison",
+            visibility: "private",
+            curatedAt: new Date("2026-07-28T12:00:00.000Z"),
+            progress: {
+              totalJobs: 1,
+              queuedJobs: 0,
+              runningJobs: 0,
+              completedJobs: 1,
+              failedJobs: 0,
+              cancelledJobs: 0,
+              interruptedJobs: 0,
+            },
+            jobs: [completedJobFixture()],
+          },
         ]}
         githubLogin="octoadmin"
         isAdmin
@@ -541,6 +557,10 @@ describe("DashboardShell", () => {
     expect(html).toContain("Private prompts and artifacts are withheld");
     expect(html).toContain('href="/results/experiment-public"');
     expect(html).toContain("Withdraw from public");
+    expect(html).toContain('name="withdrawalConfirmed"');
+    expect(html).toContain("Withdrawal is permanent");
+    expect(html).toContain("Withdrawn results cannot be republished");
+    expect(html.match(/Publish curated result/gu)).toHaveLength(1);
   });
 });
 

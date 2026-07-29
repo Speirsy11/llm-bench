@@ -364,6 +364,9 @@ describe("public result curation", () => {
       ),
     ).rejects.toThrow("Experiment is unavailable.");
     await publicResults.withdraw(administrator, experimentId);
+    await expect(
+      publicResults.withdraw(administrator, experimentId),
+    ).rejects.toThrow("Experiment is unavailable.");
 
     await expect(publicResults.get(experimentId)).resolves.toBeNull();
     const [row] = await database.db
@@ -808,6 +811,17 @@ describe("public result curation", () => {
     });
   });
 
+  it("accepts response telemetry using the runner's mean aggregate contract", async () => {
+    const experimentId = await insertCompletedExperiment();
+
+    await expect(
+      publicResults.previewCuration(administrator, experimentId),
+    ).resolves.toMatchObject({
+      canPublish: true,
+      blockers: [],
+    });
+  });
+
   it("rejects terminal experiments with no persisted result", async () => {
     const experimentId = await insertCompletedExperiment();
     const [job] = await database.db
@@ -950,6 +964,22 @@ async function insertCompletedExperiment(): Promise<string> {
       unit: "ms",
       direction: "lower_is_better",
       value: 150,
+    },
+    {
+      resultId,
+      metricId: "input_tokens",
+      kind: "tokens",
+      unit: "tokens",
+      direction: "lower_is_better",
+      value: 20,
+    },
+    {
+      resultId,
+      metricId: "output_tokens",
+      kind: "tokens",
+      unit: "tokens",
+      direction: "lower_is_better",
+      value: 10,
     },
     {
       resultId,

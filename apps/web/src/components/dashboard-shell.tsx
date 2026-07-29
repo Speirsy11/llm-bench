@@ -350,14 +350,31 @@ function ExperimentCard({
                   type="hidden"
                   value={experiment.id}
                 />
+                <label className="flex max-w-sm items-start gap-2 text-xs">
+                  <input
+                    className="mt-0.5"
+                    name="withdrawalConfirmed"
+                    required
+                    type="checkbox"
+                  />
+                  <span>
+                    Withdrawal is permanent. This immutable result cannot be
+                    republished.
+                  </span>
+                </label>
                 <button
-                  className="border-border rounded-md border px-3 py-2 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-4"
+                  className="border-border mt-3 rounded-md border px-3 py-2 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-4"
                   type="submit"
                 >
                   Withdraw from public
                 </button>
               </form>
             </div>
+          ) : experiment.curatedAt !== null ? (
+            <p className="text-muted-foreground mt-4 text-sm">
+              Withdrawn results cannot be republished. The immutable snapshot
+              remains retained for audit history.
+            </p>
           ) : (
             <form action={curateExperimentAction} className="mt-4">
               <input name="experimentId" type="hidden" value={experiment.id} />

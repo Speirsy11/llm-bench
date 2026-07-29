@@ -1,10 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { defineConfig, devices } from "@playwright/test";
 
+import { requireTestDatabaseUrl } from "./apps/web/src/app/api/e2e/guard";
+
 const e2eToken = randomBytes(32).toString("hex");
-const testDatabaseUrl =
+const testDatabaseUrl = requireTestDatabaseUrl(
   process.env.TEST_DATABASE_URL ??
-  "postgresql://llmbench:llmbench@127.0.0.1:5432/llmbench_e2e_test";
+    "postgresql://llmbench:llmbench@127.0.0.1:5432/llmbench_e2e_test",
+);
 process.env.LLMBENCH_E2E_TOKEN = e2eToken;
 
 export default defineConfig({

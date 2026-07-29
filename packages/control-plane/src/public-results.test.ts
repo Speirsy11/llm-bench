@@ -330,6 +330,32 @@ describe("buildPublicExperimentView", () => {
     expect(view.name).toContain("[redacted-secret]");
   });
 
+  it("preserves structured model routes and versioned identifiers", () => {
+    const view = buildPublicExperimentView(
+      experimentSource(
+        [
+          responseResult({
+            id: "structured-identifiers",
+            model: "@scope/qwen-2-5-coder-32b-instruct@2026-07-29",
+            value: 1,
+          }),
+        ],
+        {
+          name: 'Compare gpt-4o@2024-08-06 with owner=@alice and "@bob" using token=private-value',
+        },
+      ),
+    );
+    const serialized = JSON.stringify(view);
+
+    expect(serialized).toContain(
+      "@scope/qwen-2-5-coder-32b-instruct@2026-07-29",
+    );
+    expect(serialized).toContain("gpt-4o@2024-08-06");
+    expect(serialized).not.toContain("@alice");
+    expect(serialized).not.toContain("@bob");
+    expect(serialized).not.toContain("private-value");
+  });
+
   it("ranks lower-is-better ties and labels unregistered metrics literally", () => {
     const durationJobs = [
       withPrimaryMetric(

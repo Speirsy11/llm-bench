@@ -505,7 +505,12 @@ export function createPublicResultService(
           visibility: "private",
           updatedAt: now(),
         })
-        .where(eq(experiments.id, experimentId))
+        .where(
+          and(
+            eq(experiments.id, experimentId),
+            eq(experiments.visibility, "public"),
+          ),
+        )
         .returning({ id: experiments.id });
       if (!withdrawn) throw new Error("Experiment is unavailable.");
     },
@@ -1498,7 +1503,7 @@ function sanitizeText(
   field: string,
   sanitization: SanitizationState,
 ): string {
-  const sanitized = value
+  let sanitized = value
     .replace(
       /\b[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@[^\s]+/giu,
       "[redacted-secret-url]",
@@ -1521,13 +1526,23 @@ function sanitizeText(
       /\b(?:password|passwd|pwd|token|secret|api[_-]?key|access[_-]?key)\s*[:=]\s*[^\s,;]+/giu,
       "[redacted-secret]",
     )
-    .replace(/\b[a-f0-9]{32,}\b/giu, "[redacted-secret]")
-    .replace(
+    .replace(/\b[a-f0-9]{32,}\b/giu, "[redacted-secret]");
+  if (field === "experiment.name") {
+    sanitized = sanitized.replace(
       /\b(?=[A-Za-z0-9+/=_-]{32,}\b)(?=[A-Za-z0-9+/=_-]*[A-Za-z])(?=[A-Za-z0-9+/=_-]*[0-9])[A-Za-z0-9+/=_-]+\b/gu,
       "[redacted-secret]",
-    )
-    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/giu, "[redacted-email]")
-    .replace(/@[A-Za-z0-9_-]+/gu, "[redacted-user]");
+    );
+  }
+  sanitized = sanitized.replace(
+    /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/giu,
+    "[redacted-email]",
+  );
+  if (field === "experiment.name") {
+    sanitized = sanitized.replace(
+      /(^|[^A-Za-z0-9_./+-])@[A-Za-z0-9_-]+/gu,
+      "$1[redacted-user]",
+    );
+  }
   if (sanitized !== value) sanitization.redactedFields.add(field);
   return sanitized;
 }
